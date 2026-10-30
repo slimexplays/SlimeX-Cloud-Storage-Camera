@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- In-app brand mark (transparent background, same artwork as the launcher icon). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#D8B4FE"
+        android:pathData="M78,26 l1.9,5.1 5.1,1.9 -5.1,1.9 -1.9,5.1 -1.9,-5.1 -5.1,-1.9 5.1,-1.9 z" />
+
+    <path android:fillColor="#E9D5FF" android:fillAlpha="0.85" android:pathData="M64,40 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0" />
+    <path android:fillColor="#E9D5FF" android:fillAlpha="0.85" android:pathData="M73,38 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path android:fillColor="#E9D5FF" android:fillAlpha="0.85" android:pathData="M81,41 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+
+    <path android:pathData="M44,42 h20 a4,4 0 0 1 4,4 v4 h-28 v-4 a4,4 0 0 1 4,-4 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="70"
+                android:endY="50"
+                android:startX="40"
+                android:startY="42"
+                android:type="linear">
+                <item android:color="#FFB47CFF" android:offset="0" />
+                <item android:color="#FF7C3AED" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <path android:pathData="M40,48 h28 a10,10 0 0 1 10,10 v10 a10,10 0 0 1 -10,10 h-28 a10,10 0 0 1 -10,-10 v-10 a10,10 0 0 1 10,-10 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="80"
+                android:endY="80"
+                android:startX="30"
+                android:startY="46"
+                android:type="linear">
+                <item android:color="#FFC084FC" android:offset="0" />
+                <item android:color="#FF7C3AED" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <path
+        android:fillColor="#FF0A0A0E"
+        android:pathData="M54,62 m-13,0 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0" />
+    <path
+        android:fillColor="#FFA855F7"
+        android:pathData="M54,62 m-7.5,0 a7.5,7.5 0 1,0 15,0 a7.5,7.5 0 1,0 -15,0" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillAlpha="0.85"
+        android:pathData="M50.5,58.5 m-2.4,0 a2.4,2.4 0 1,0 4.8,0 a2.4,2.4 0 1,0 -4.8,0" />
+
+</vector>

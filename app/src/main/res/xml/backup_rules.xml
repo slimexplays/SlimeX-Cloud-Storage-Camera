@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup is disabled (android:allowBackup="false") because Supabase credentials live in
+  Keystore-encrypted storage. These rules are kept for tooling completeness and in case
+  a future build enables backup for non-sensitive app-private media only.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="file" path="datastore" />
+    <exclude domain="file" path="secure" />
+</full-backup-content>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Exposes only the app-private media folder to the FileProvider so captures can be
+  shared through the system chooser. No other app data is reachable.
+-->
+<paths>
+    <files-path
+        name="slimex_media"
+        path="media/" />
+</paths>
