@@ -36,6 +36,8 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setWifiOnlyUpload(enabled: Boolean) = put(Keys.WIFI_ONLY, enabled)
 
+    override suspend fun setStrictZeroLocalStorage(enabled: Boolean) = put(Keys.STRICT_ZERO_LOCAL, enabled)
+
     override suspend fun setPhotoQuality(quality: PhotoQuality) = put(Keys.PHOTO_QUALITY, quality.name)
 
     override suspend fun setVideoQuality(quality: VideoQualityPreference) = put(Keys.VIDEO_QUALITY, quality.name)
@@ -69,6 +71,7 @@ class SettingsRepositoryImpl @Inject constructor(
         onboardingCompleted = this[Keys.ONBOARDING] ?: false,
         autoUpload = this[Keys.AUTO_UPLOAD] ?: true,
         wifiOnlyUpload = this[Keys.WIFI_ONLY] ?: false,
+        strictZeroLocalStorage = this[Keys.STRICT_ZERO_LOCAL] ?: false,
         photoQuality = PhotoQuality.fromName(this[Keys.PHOTO_QUALITY]),
         videoQuality = VideoQualityPreference.fromName(this[Keys.VIDEO_QUALITY]),
         recordVideoAudio = this[Keys.RECORD_AUDIO] ?: true,
@@ -81,6 +84,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val ONBOARDING = booleanPreferencesKey("onboarding_completed")
         val AUTO_UPLOAD = booleanPreferencesKey("auto_upload")
         val WIFI_ONLY = booleanPreferencesKey("wifi_only_upload")
+        val STRICT_ZERO_LOCAL = booleanPreferencesKey("strict_zero_local_storage")
         val PHOTO_QUALITY = stringPreferencesKey("photo_quality")
         val VIDEO_QUALITY = stringPreferencesKey("video_quality")
         val RECORD_AUDIO = booleanPreferencesKey("record_video_audio")

@@ -3,23 +3,22 @@ package com.slimex.cloudcamera.domain.repository
 import com.slimex.cloudcamera.core.result.AppResult
 import com.slimex.cloudcamera.domain.model.LocalMedia
 import com.slimex.cloudcamera.domain.model.LocalStorageSummary
-import com.slimex.cloudcamera.domain.model.MediaKind
 import kotlinx.coroutines.flow.StateFlow
-import java.io.File
 
-/** App-private media files (captures). Nothing here touches shared/public storage. */
+/**
+ * App-private staging area. Every file listed here is a capture that has **not** been verified
+ * in the cloud yet, so nothing in this repository may be deleted by cache clean-up.
+ */
 interface LocalMediaRepository {
-    val media: StateFlow<List<LocalMedia>>
-
-    suspend fun createOutputFile(kind: MediaKind): AppResult<File>
+    val pending: StateFlow<List<LocalMedia>>
 
     suspend fun refresh()
 
-    suspend fun delete(media: LocalMedia): AppResult<Unit>
-
-    suspend fun deleteAll(): AppResult<Int>
-
     suspend fun summary(): AppResult<LocalStorageSummary>
 
-    suspend fun clearThumbnails(): AppResult<Long>
+    /** Frees evictable caches (thumbnails, viewer, share) and reports the bytes reclaimed. */
+    suspend fun clearCache(): AppResult<Long>
+
+    /** Moves Part 1 captures into the encrypted pipeline (one-time, idempotent). */
+    suspend fun migrateLegacyCaptures(): AppResult<Int>
 }

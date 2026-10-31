@@ -124,8 +124,9 @@ dependencies {
     // Background work
     implementation(libs.androidx.work.runtime.ktx)
 
-    // Image loading
+    // Image loading / capture metadata
     implementation(libs.coil.compose)
+    implementation(libs.androidx.exifinterface)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

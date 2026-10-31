@@ -114,7 +114,7 @@ class SupabaseConnectionTester @Inject constructor(
         steps[2] = bucketStep(bucket, config)
         emit()
 
-        // 4. media_assets table (warning only, same reasoning)
+        // 4. media_files table (warning only, same reasoning)
         steps[3] = steps[3].copy(status = ConnectionStepStatus.RUNNING)
         emit()
         val table = client.probeTable(config)
@@ -136,7 +136,7 @@ class SupabaseConnectionTester @Inject constructor(
             )
             table.isUnauthorized -> steps[3].copy(
                 status = ConnectionStepStatus.WARNING,
-                detail = "Table exists but RLS blocks reads — re-run the policies in supabase/schema.sql.",
+                detail = "Table exists but requires a signed-in user (RLS) — sign in from Account.",
                 required = false,
             )
             else -> steps[3].copy(
@@ -172,7 +172,8 @@ class SupabaseConnectionTester @Inject constructor(
             )
             outcome.isUnauthorized -> base.copy(
                 status = ConnectionStepStatus.WARNING,
-                detail = "Bucket exists but storage policies block this key — re-run supabase/storage.sql.",
+                detail = "Bucket is private and needs a signed-in user — expected. " +
+                    "Sign in from Account, and run supabase/storage.sql if it is missing.",
             )
             else -> base.copy(
                 status = ConnectionStepStatus.WARNING,

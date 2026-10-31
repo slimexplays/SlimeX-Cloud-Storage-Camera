@@ -9,7 +9,9 @@ import com.slimex.cloudcamera.core.network.AndroidConnectivityObserver
 import com.slimex.cloudcamera.core.network.ConnectivityObserver
 import com.slimex.cloudcamera.core.util.DefaultDispatchersProvider
 import com.slimex.cloudcamera.core.util.DispatchersProvider
+import com.slimex.cloudcamera.security.AesGcmMediaCrypto
 import com.slimex.cloudcamera.security.EncryptedSecureStore
+import com.slimex.cloudcamera.security.MediaCrypto
 import com.slimex.cloudcamera.security.SecureStore
 import dagger.Binds
 import dagger.Module
@@ -48,9 +50,9 @@ object AppModule {
     @Singleton
     fun provideOkHttpClient(): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
-        .writeTimeout(120, TimeUnit.SECONDS)
-        .callTimeout(180, TimeUnit.SECONDS)
+        // No overall call timeout: a 500 MB video on a slow connection must be allowed to finish.
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(5, TimeUnit.MINUTES)
         .retryOnConnectionFailure(true)
         .build()
 
@@ -71,4 +73,8 @@ abstract class BindingsModule {
     @Binds
     @Singleton
     abstract fun bindConnectivityObserver(impl: AndroidConnectivityObserver): ConnectivityObserver
+
+    @Binds
+    @Singleton
+    abstract fun bindMediaCrypto(impl: AesGcmMediaCrypto): MediaCrypto
 }

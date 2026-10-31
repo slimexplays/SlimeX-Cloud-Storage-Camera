@@ -19,6 +19,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.slimex.cloudcamera.ui.components.SlimeXBottomBar
 import com.slimex.cloudcamera.ui.screens.about.AboutScreen
+import com.slimex.cloudcamera.ui.screens.auth.AuthScreen
 import com.slimex.cloudcamera.ui.screens.camera.CameraScreen
 import com.slimex.cloudcamera.ui.screens.gallery.CloudGalleryScreen
 import com.slimex.cloudcamera.ui.screens.home.HomeScreen
@@ -109,6 +110,15 @@ fun SlimeXNavHost(
                 CloudGalleryScreen(
                     contentPadding = innerPadding,
                     onOpenCloudSetup = { navController.navigate(Destinations.CLOUD_SETUP) { launchSingleTop = true } },
+                    onOpenAccount = { navController.navigate(Destinations.ACCOUNT) { launchSingleTop = true } },
+                )
+            }
+
+            composable(Destinations.ACCOUNT) {
+                AuthScreen(
+                    contentPadding = innerPadding,
+                    onBack = { navController.popBackStack() },
+                    onOpenCloudSetup = { navController.navigate(Destinations.CLOUD_SETUP) { launchSingleTop = true } },
                 )
             }
 
@@ -116,6 +126,7 @@ fun SlimeXNavHost(
                 UploadQueueScreen(
                     contentPadding = innerPadding,
                     onOpenCloudSetup = { navController.navigate(Destinations.CLOUD_SETUP) { launchSingleTop = true } },
+                    onOpenAccount = { navController.navigate(Destinations.ACCOUNT) { launchSingleTop = true } },
                 )
             }
 
@@ -123,6 +134,7 @@ fun SlimeXNavHost(
                 StorageScreen(
                     contentPadding = innerPadding,
                     onOpenCloudSetup = { navController.navigate(Destinations.CLOUD_SETUP) { launchSingleTop = true } },
+                    onOpenAccount = { navController.navigate(Destinations.ACCOUNT) { launchSingleTop = true } },
                 )
             }
 
@@ -135,6 +147,7 @@ fun SlimeXNavHost(
                     },
                     onOpenAbout = { navController.navigate(Destinations.ABOUT) { launchSingleTop = true } },
                     onOpenStorage = { navController.navigateToTab(Destinations.STORAGE) },
+                    onOpenAccount = { navController.navigate(Destinations.ACCOUNT) { launchSingleTop = true } },
                 )
             }
 

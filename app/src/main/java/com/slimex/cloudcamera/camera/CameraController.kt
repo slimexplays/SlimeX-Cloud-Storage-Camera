@@ -4,7 +4,9 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.view.Surface
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
@@ -60,6 +62,8 @@ class CameraController(
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
     private var recordingStartNanos: Long = 0L
+    private var boundCamera: Camera? = null
+    private var boundPreviewView: PreviewView? = null
 
     var isRecording: Boolean = false
         private set
@@ -106,6 +110,8 @@ class CameraController(
             val boundCamera = when (mode) {
                 CaptureMode.PHOTO -> {
                     val capture = ImageCapture.Builder()
+                        .setJpegQuality(if (photoQuality == PhotoQuality.HIGH) 100 else 92)
+                        .setFlashMode(ImageCapture.FLASH_MODE_AUTO)
                         .setCaptureMode(
                             if (photoQuality == PhotoQuality.HIGH) ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
                             else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY,
@@ -128,6 +134,9 @@ class CameraController(
                     provider.bindToLifecycle(lifecycleOwner, selector, newPreview, capture)
                 }
             }
+
+            this@CameraController.boundCamera = boundCamera
+            boundPreviewView = previewView
 
             val hasFlash = runCatching { boundCamera.cameraInfo.hasFlashUnit() }.getOrDefault(false)
             listener?.onCameraBound(
@@ -179,6 +188,48 @@ class CameraController(
         }
     }
 
+    /** Linear zoom, 0f = widest, 1f = maximum optical/digital zoom the device allows. */
+    fun setLinearZoom(fraction: Float) {
+        val camera = boundCamera ?: return
+        runCatching { camera.cameraControl.setLinearZoom(fraction.coerceIn(0f, 1f)) }
+    }
+
+    fun zoomRatio(): Float =
+        runCatching { boundCamera?.cameraInfo?.zoomState?.value?.zoomRatio }.getOrNull() ?: 1f
+
+    fun maxZoomRatio(): Float =
+        runCatching { boundCamera?.cameraInfo?.zoomState?.value?.maxZoomRatio }.getOrNull() ?: 1f
+
+    /**
+     * Tap-to-focus + tap-to-meter. Coordinates are in PreviewView pixels; CameraX maps them to
+     * the sensor's metering regions. Auto-cancels so the next tap (or 3 s) restores continuous AF.
+     */
+    fun focusAt(x: Float, y: Float) {
+        val camera = boundCamera ?: return
+        val view = boundPreviewView ?: return
+        runCatching {
+            val point = view.meteringPointFactory.createPoint(x, y)
+            val action = FocusMeteringAction.Builder(
+                point,
+                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE,
+            )
+                .setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            camera.cameraControl.startFocusAndMetering(action)
+        }
+    }
+
+    /** Torch for video capture (the flash unit stays on while recording). */
+    fun setTorch(enabled: Boolean) {
+        val camera = boundCamera ?: return
+        runCatching { camera.cameraControl.enableTorch(enabled) }
+    }
+
+    fun stopTorch() {
+        val camera = boundCamera ?: return
+        runCatching { camera.cameraControl.enableTorch(false) }
+    }
+
     fun startRecording(outputFile: File, withAudio: Boolean): AppResult<Unit> {
         val video = videoCapture
             ?: return AppResult.Failure(AppFailure("The camera is not ready yet."))
@@ -207,12 +258,15 @@ class CameraController(
 
     fun unbind() {
         runCatching { activeRecording?.stop() }
+        stopTorch()
         activeRecording = null
         isRecording = false
         runCatching { cameraProvider?.unbindAll() }
         imageCapture = null
         videoCapture = null
         preview = null
+        boundCamera = null
+        boundPreviewView = null
     }
 
     private fun handleRecordEvent(event: VideoRecordEvent, file: File) {

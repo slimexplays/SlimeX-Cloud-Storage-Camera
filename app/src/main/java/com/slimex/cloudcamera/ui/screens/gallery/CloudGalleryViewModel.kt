@@ -3,14 +3,18 @@ package com.slimex.cloudcamera.ui.screens.gallery
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.slimex.cloudcamera.core.result.AppResult
-import com.slimex.cloudcamera.domain.model.CloudAsset
-import com.slimex.cloudcamera.domain.model.LocalMedia
+import com.slimex.cloudcamera.domain.model.AuthStatus
+import com.slimex.cloudcamera.domain.model.CloudMedia
+import com.slimex.cloudcamera.domain.model.MediaFilter
+import com.slimex.cloudcamera.domain.model.MediaSort
+import com.slimex.cloudcamera.domain.repository.AuthRepository
 import com.slimex.cloudcamera.domain.repository.CloudConfigRepository
 import com.slimex.cloudcamera.domain.repository.CloudGalleryRepository
 import com.slimex.cloudcamera.domain.repository.LocalMediaRepository
-import com.slimex.cloudcamera.gallery.SignedUrlCache
 import com.slimex.cloudcamera.sharing.MediaSharer
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,74 +24,112 @@ import javax.inject.Inject
 
 @HiltViewModel
 class CloudGalleryViewModel @Inject constructor(
-    private val cloudGalleryRepository: CloudGalleryRepository,
-    private val cloudConfigRepository: CloudConfigRepository,
+    private val gallery: CloudGalleryRepository,
     private val localMediaRepository: LocalMediaRepository,
-    private val signedUrlCache: SignedUrlCache,
+    private val cloudConfigRepository: CloudConfigRepository,
+    private val authRepository: AuthRepository,
     private val mediaSharer: MediaSharer,
 ) : ViewModel() {
 
-    enum class Tab { CLOUD, DEVICE }
+    data class ViewerState(
+        val media: CloudMedia,
+        val filePath: String? = null,
+        val loading: Boolean = true,
+        val progress: Float = 0f,
+        val error: String? = null,
+    )
 
     data class State(
-        val tab: Tab = Tab.CLOUD,
         val loading: Boolean = false,
-        val cloudConfigured: Boolean = false,
-        val cloudHost: String? = null,
-        val assets: List<CloudAsset> = emptyList(),
-        val localMedia: List<LocalMedia> = emptyList(),
-        val signedUrls: Map<String, String> = emptyMap(),
+        val configured: Boolean = false,
+        val signedIn: Boolean = false,
+        val assets: List<CloudMedia> = emptyList(),
+        val thumbnails: Map<String, String> = emptyMap(),
+        val filter: MediaFilter = MediaFilter.ALL,
+        val sort: MediaSort = MediaSort.NEWEST,
+        val search: String = "",
         val error: String? = null,
         val message: String? = null,
-        val deleting: Boolean = false,
-        val preview: CloudAsset? = null,
-    )
+        val viewer: ViewerState? = null,
+        val deletingId: String? = null,
+        val sharingId: String? = null,
+    ) {
+        val needsSetup: Boolean get() = !configured
+        val needsSignIn: Boolean get() = configured && !signedIn
+    }
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
+    private var loadJob: Job? = null
+    private val thumbnailRequests = mutableSetOf<String>()
+
     init {
         viewModelScope.launch {
             cloudConfigRepository.config.collect { config ->
-                _state.update {
-                    it.copy(
-                        cloudConfigured = config != null,
-                        cloudHost = config?.host,
-                        assets = if (config == null) emptyList() else it.assets,
-                    )
-                }
-                if (config != null) loadCloudAssets()
+                _state.update { it.copy(configured = config != null) }
+                if (config != null) load() else _state.update { it.copy(assets = emptyList()) }
             }
         }
         viewModelScope.launch {
-            localMediaRepository.media.collect { media ->
-                _state.update { it.copy(localMedia = media) }
+            authRepository.status.collect { status ->
+                _state.update { it.copy(signedIn = status is AuthStatus.SignedIn) }
+                if (status is AuthStatus.SignedIn && _state.value.configured) load()
             }
         }
         viewModelScope.launch { runCatching { localMediaRepository.refresh() } }
     }
 
-    fun selectTab(tab: Tab) {
-        _state.update { it.copy(tab = tab) }
-        if (tab == Tab.CLOUD && _state.value.cloudConfigured && _state.value.assets.isEmpty()) {
-            loadCloudAssets()
+    fun refresh() = load(showSpinner = _state.value.assets.isEmpty())
+
+    fun setFilter(filter: MediaFilter) {
+        if (_state.value.filter == filter) return
+        _state.update { it.copy(filter = filter) }
+        load(showSpinner = true)
+    }
+
+    fun setSort(sort: MediaSort) {
+        if (_state.value.sort == sort) return
+        _state.update { it.copy(sort = sort) }
+        load(showSpinner = true)
+    }
+
+    fun setSearch(query: String) {
+        _state.update { it.copy(search = query) }
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            delay(350)
+            load(showSpinner = true)
         }
     }
 
-    fun refresh() {
-        viewModelScope.launch { runCatching { localMediaRepository.refresh() } }
-        if (_state.value.tab == Tab.CLOUD && _state.value.cloudConfigured) {
-            loadCloudAssets()
-        }
+    fun clearSearch() {
+        _state.update { it.copy(search = "") }
+        load(showSpinner = true)
     }
 
-    private fun loadCloudAssets() {
-        viewModelScope.launch {
-            _state.update { it.copy(loading = true, error = null) }
-            when (val result = cloudGalleryRepository.listAssets(limit = 60)) {
+    fun load(showSpinner: Boolean = true) {
+        val current = _state.value
+        if (!current.configured) {
+            _state.update { it.copy(loading = false, assets = emptyList()) }
+            return
+        }
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            if (showSpinner) _state.update { it.copy(loading = true, error = null) }
+            val query = _state.value.search.trim().takeIf { it.isNotBlank() }
+            when (
+                val result = gallery.list(
+                    filter = _state.value.filter,
+                    sort = _state.value.sort,
+                    search = query,
+                    limit = PAGE_SIZE,
+                )
+            ) {
                 is AppResult.Success -> _state.update {
                     it.copy(loading = false, assets = result.data, error = null)
                 }
+
                 is AppResult.Failure -> _state.update {
                     it.copy(loading = false, error = result.error.message)
                 }
@@ -95,65 +137,113 @@ class CloudGalleryViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Signed URLs are fetched lazily, one per visible tile, and cached with their expiry so
-     * thumbnails keep working without leaking expired links.
-     */
-    fun ensureSignedUrl(asset: CloudAsset) {
-        signedUrlCache.get(asset.id)?.let { cached ->
-            if (_state.value.signedUrls[asset.id] != cached) {
-                _state.update { it.copy(signedUrls = it.signedUrls + (asset.id to cached)) }
-            }
-            return
-        }
-        if (_state.value.signedUrls.containsKey(asset.id)) return
+    /** Decrypts (once) the small sidecar preview for a grid tile. */
+    fun ensureThumbnail(media: CloudMedia) {
+        if (_state.value.thumbnails.containsKey(media.id)) return
+        if (!thumbnailRequests.add(media.id)) return
         viewModelScope.launch {
-            val result = cloudGalleryRepository.signedUrl(asset)
-            if (result is AppResult.Success) {
-                signedUrlCache.put(asset.id, result.data, SIGNED_URL_TTL_SECONDS)
-                _state.update { it.copy(signedUrls = it.signedUrls + (asset.id to result.data)) }
+            val result = gallery.thumbnail(media)
+            val path = result.getOrNull()?.absolutePath
+            if (path != null) {
+                _state.update { it.copy(thumbnails = it.thumbnails + (media.id to path)) }
+            } else {
+                thumbnailRequests.remove(media.id)
             }
         }
     }
 
-    /** Shares a local capture through the Android chooser (FileProvider backed). */
-    fun shareLocal(item: LocalMedia) {
-        when (val result = mediaSharer.share(item)) {
-            is AppResult.Success -> Unit
-            is AppResult.Failure -> _state.update { it.copy(message = result.error.message) }
-        }
-    }
-
-    fun openPreview(asset: CloudAsset) {
-        _state.update { it.copy(preview = asset) }
-        ensureSignedUrl(asset)
-    }
-
-    fun closePreview() = _state.update { it.copy(preview = null) }
-
-    fun deleteAsset(asset: CloudAsset) {
-        if (_state.value.deleting) return
+    fun openViewer(media: CloudMedia) {
+        _state.update { it.copy(viewer = ViewerState(media = media)) }
         viewModelScope.launch {
-            _state.update { it.copy(deleting = true) }
-            when (val result = cloudGalleryRepository.deleteAsset(asset)) {
-                is AppResult.Success -> _state.update {
-                    it.copy(
-                        deleting = false,
-                        assets = it.assets.filterNot { item -> item.id == asset.id },
-                        preview = null,
-                        message = "Removed from your cloud storage",
-                    )
+            when (val result = gallery.open(media) { fraction ->
+                _state.update { current ->
+                    current.viewer?.let { viewer ->
+                        if (viewer.media.id == media.id) {
+                            current.copy(viewer = viewer.copy(progress = fraction))
+                        } else {
+                            current
+                        }
+                    } ?: current
                 }
+            }) {
+                is AppResult.Success -> _state.update { current ->
+                    current.viewer?.let { viewer ->
+                        if (viewer.media.id == media.id) {
+                            current.copy(
+                                viewer = viewer.copy(
+                                    filePath = result.data.absolutePath,
+                                    loading = false,
+                                    progress = 1f,
+                                ),
+                            )
+                        } else {
+                            current
+                        }
+                    } ?: current
+                }
+
+                is AppResult.Failure -> _state.update { current ->
+                    current.viewer?.let { viewer ->
+                        if (viewer.media.id == media.id) {
+                            current.copy(
+                                viewer = viewer.copy(loading = false, error = result.error.message),
+                            )
+                        } else {
+                            current
+                        }
+                    } ?: current
+                }
+            }
+        }
+    }
+
+    fun closeViewer() = _state.update { it.copy(viewer = null) }
+
+    fun delete(media: CloudMedia) {
+        if (_state.value.deletingId != null) return
+        viewModelScope.launch {
+            _state.update { it.copy(deletingId = media.id) }
+            when (val result = gallery.delete(media)) {
+                is AppResult.Success -> {
+                    _state.update { current ->
+                        current.copy(
+                            deletingId = null,
+                            assets = current.assets.filterNot { it.id == media.id },
+                            thumbnails = current.thumbnails - media.id,
+                            viewer = current.viewer?.takeIf { it.media.id != media.id },
+                            message = "Deleted from your cloud storage",
+                        )
+                    }
+                }
+
                 is AppResult.Failure -> _state.update {
-                    it.copy(deleting = false, message = result.error.message)
+                    it.copy(deletingId = null, error = result.error.message)
                 }
             }
         }
     }
+
+    fun share(media: CloudMedia) {
+        if (_state.value.sharingId != null) return
+        viewModelScope.launch {
+            _state.update { it.copy(sharingId = media.id) }
+            when (val result = mediaSharer.share(media)) {
+                is AppResult.Success -> _state.update {
+                    it.copy(sharingId = null, message = "Choose an app to share with")
+                }
+
+                is AppResult.Failure -> _state.update {
+                    it.copy(sharingId = null, error = result.error.message)
+                }
+            }
+        }
+    }
+
+    fun consumeError() = _state.update { it.copy(error = null) }
 
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
     private companion object {
-        const val SIGNED_URL_TTL_SECONDS = 3_600L
+        const val PAGE_SIZE = 100
     }
 }

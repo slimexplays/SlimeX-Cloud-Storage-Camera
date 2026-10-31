@@ -9,18 +9,22 @@ import com.slimex.cloudcamera.domain.model.CloudConfig
 import com.slimex.cloudcamera.domain.model.CloudSetupStatus
 import com.slimex.cloudcamera.domain.model.ConnectionReport
 import com.slimex.cloudcamera.domain.model.ConnectionStepStatus
+import com.slimex.cloudcamera.domain.repository.AuthRepository
 import com.slimex.cloudcamera.domain.repository.CloudConfigRepository
 import com.slimex.cloudcamera.security.SecureStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import javax.inject.Provider
 import javax.inject.Singleton
 
 @Singleton
 class CloudConfigRepositoryImpl @Inject constructor(
     private val secureStore: SecureStore,
     private val tester: SupabaseConnectionTester,
+    /** Lazy to avoid a dependency cycle: the auth layer needs the config, not the other way round. */
+    private val authRepository: Provider<AuthRepository>,
 ) : CloudConfigRepository {
 
     private val cached = MutableStateFlow(readFromDisk())
@@ -61,12 +65,20 @@ class CloudConfigRepositoryImpl @Inject constructor(
             )
         }
 
+        val previous = cached.value ?: readFromDisk()
         persist(candidate)
         cached.value = candidate
+        // Tokens belong to a project: a new URL/key invalidates any existing session.
+        if (previous == null || previous.projectUrl != candidate.projectUrl ||
+            previous.publishableKey != candidate.publishableKey
+        ) {
+            runCatching { authRepository.get().clearSession() }
+        }
         return AppResult.Success(candidate)
     }
 
     override suspend fun clear() {
+        runCatching { authRepository.get().clearSession() }
         secureStore.remove(KEY_URL)
         secureStore.remove(KEY_API)
         secureStore.remove(KEY_SAVED_AT)
@@ -128,11 +140,11 @@ class CloudConfigRepositoryImpl @Inject constructor(
         )
     }
 
-    private fun readBucket(): String =
-        secureStore.getString(KEY_BUCKET)?.takeIf { it.isNotBlank() } ?: AppConstants.DEFAULT_BUCKET
+    // Part 2 always uses the private bucket and media_files table. Values stored by an older
+    // build are ignored on purpose so an upgraded install never talks to a public bucket.
+    private fun readBucket(): String = AppConstants.DEFAULT_BUCKET
 
-    private fun readTable(): String =
-        secureStore.getString(KEY_TABLE)?.takeIf { it.isNotBlank() } ?: AppConstants.MEDIA_TABLE
+    private fun readTable(): String = AppConstants.MEDIA_TABLE
 
     private companion object {
         const val KEY_URL = "cloud_project_url"

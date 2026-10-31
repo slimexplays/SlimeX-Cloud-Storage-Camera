@@ -1,17 +1,37 @@
 package com.slimex.cloudcamera.domain.repository
 
 import com.slimex.cloudcamera.core.result.AppResult
-import com.slimex.cloudcamera.domain.model.CloudAsset
+import com.slimex.cloudcamera.domain.model.CloudMedia
+import com.slimex.cloudcamera.domain.model.MediaFilter
+import com.slimex.cloudcamera.domain.model.MediaSort
 import com.slimex.cloudcamera.domain.model.RemoteUsage
+import java.io.File
 
-/** Read access to the assets already uploaded to the user's Supabase project. */
+/**
+ * The private cloud library: list, preview, open, share and delete the owner's own media.
+ *
+ * Objects are always fetched with the signed-in user's token; thumbnails are decrypted into the
+ * app cache, never into shared storage.
+ */
 interface CloudGalleryRepository {
-    suspend fun listAssets(limit: Int = 60): AppResult<List<CloudAsset>>
+    suspend fun list(
+        filter: MediaFilter = MediaFilter.ALL,
+        sort: MediaSort = MediaSort.NEWEST,
+        search: String? = null,
+        limit: Int = 100,
+        offset: Int = 0,
+    ): AppResult<List<CloudMedia>>
 
-    /** Short-lived signed URL for a private object (bucket is never public). */
-    suspend fun signedUrl(asset: CloudAsset, expiresInSeconds: Long = 3_600): AppResult<String>
+    suspend fun usage(): AppResult<RemoteUsage>
 
-    suspend fun deleteAsset(asset: CloudAsset): AppResult<Unit>
+    suspend fun delete(media: CloudMedia): AppResult<Unit>
 
-    suspend fun remoteUsage(): AppResult<RemoteUsage>
+    /** Decrypts a cached thumbnail for the grid (null when no preview exists yet). */
+    suspend fun thumbnail(media: CloudMedia): AppResult<File?>
+
+    /** Downloads + decrypts the full media into private cache for the viewer. */
+    suspend fun open(media: CloudMedia, onProgress: (Float) -> Unit = {}): AppResult<File>
+
+    /** Copies the decrypted media into the share cache; returns the file handed to FileProvider. */
+    suspend fun prepareForShare(media: CloudMedia): AppResult<File>
 }

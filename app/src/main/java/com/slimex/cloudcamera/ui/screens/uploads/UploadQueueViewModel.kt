@@ -2,8 +2,11 @@ package com.slimex.cloudcamera.ui.screens.uploads
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.slimex.cloudcamera.core.network.ConnectivityObserver
+import com.slimex.cloudcamera.domain.model.AuthStatus
 import com.slimex.cloudcamera.domain.model.UploadQueueSummary
 import com.slimex.cloudcamera.domain.model.UploadTask
+import com.slimex.cloudcamera.domain.repository.AuthRepository
 import com.slimex.cloudcamera.domain.repository.CloudConfigRepository
 import com.slimex.cloudcamera.domain.repository.SettingsRepository
 import com.slimex.cloudcamera.domain.repository.UploadRepository
@@ -21,15 +24,29 @@ class UploadQueueViewModel @Inject constructor(
     private val uploadRepository: UploadRepository,
     private val cloudConfigRepository: CloudConfigRepository,
     private val settingsRepository: SettingsRepository,
+    private val authRepository: AuthRepository,
+    private val connectivity: ConnectivityObserver,
 ) : ViewModel() {
 
     data class State(
         val tasks: List<UploadTask> = emptyList(),
         val summary: UploadQueueSummary = UploadQueueSummary(),
         val cloudConfigured: Boolean = false,
+        val signedIn: Boolean = false,
+        val online: Boolean = false,
         val autoUpload: Boolean = true,
+        val wifiOnly: Boolean = false,
         val message: String? = null,
-    )
+    ) {
+        val blockedReason: String?
+            get() = when {
+                !cloudConfigured -> "Add your Supabase project in Settings to start uploading."
+                !signedIn -> "Sign in to your Supabase project to upload."
+                !autoUpload -> "Automatic uploads are paused."
+                !online -> "Waiting for a network connection."
+                else -> null
+            }
+    }
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
@@ -47,9 +64,26 @@ class UploadQueueViewModel @Inject constructor(
                     summary = summary,
                     cloudConfigured = config != null,
                     autoUpload = settings.autoUpload,
+                    wifiOnly = settings.wifiOnlyUpload,
                 )
             }.collect { next ->
-                _state.update { current -> next.copy(message = current.message) }
+                _state.update { current ->
+                    next.copy(
+                        message = current.message,
+                        signedIn = current.signedIn,
+                        online = current.online,
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            authRepository.status.collect { status ->
+                _state.update { it.copy(signedIn = status is AuthStatus.SignedIn) }
+            }
+        }
+        viewModelScope.launch {
+            connectivity.status.collect { status ->
+                _state.update { it.copy(online = status.online) }
             }
         }
     }
@@ -64,7 +98,7 @@ class UploadQueueViewModel @Inject constructor(
     fun cancel(taskId: String) {
         viewModelScope.launch {
             uploadRepository.cancel(taskId)
-            _state.update { it.copy(message = "Upload cancelled") }
+            _state.update { it.copy(message = "Upload cancelled. The capture is still on this device.") }
         }
     }
 
@@ -77,13 +111,23 @@ class UploadQueueViewModel @Inject constructor(
 
     fun resumeAll() {
         viewModelScope.launch {
-            uploadRepository.resumePending()
+            uploadRepository.resumePending(retryFailed = true)
             _state.update { it.copy(message = "Queue resumed") }
         }
     }
 
     fun setAutoUpload(enabled: Boolean) {
-        viewModelScope.launch { runCatching { settingsRepository.setAutoUpload(enabled) } }
+        viewModelScope.launch {
+            runCatching { settingsRepository.setAutoUpload(enabled) }
+            if (enabled) uploadRepository.resumePending()
+        }
+    }
+
+    fun setWifiOnly(enabled: Boolean) {
+        viewModelScope.launch {
+            runCatching { settingsRepository.setWifiOnlyUpload(enabled) }
+            uploadRepository.resumePending()
+        }
     }
 
     fun consumeMessage() = _state.update { it.copy(message = null) }

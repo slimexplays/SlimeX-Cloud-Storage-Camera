@@ -14,6 +14,9 @@ interface SettingsRepository {
     suspend fun setOnboardingCompleted(completed: Boolean)
     suspend fun setAutoUpload(enabled: Boolean)
     suspend fun setWifiOnlyUpload(enabled: Boolean)
+
+    /** Blocks capture while offline instead of buffering media on the device. */
+    suspend fun setStrictZeroLocalStorage(enabled: Boolean)
     suspend fun setPhotoQuality(quality: PhotoQuality)
     suspend fun setVideoQuality(quality: VideoQualityPreference)
     suspend fun setRecordVideoAudio(enabled: Boolean)

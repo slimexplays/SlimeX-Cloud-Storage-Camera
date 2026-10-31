@@ -1,5 +1,8 @@
 package com.slimex.cloudcamera.ui.screens.gallery
 
+import android.widget.MediaController
+import android.widget.VideoView
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,23 +16,31 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Cloud
-import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Login
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Sort
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -45,25 +56,27 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.slimex.cloudcamera.core.util.Formatters
-import com.slimex.cloudcamera.domain.model.CloudAsset
-import com.slimex.cloudcamera.domain.model.LocalMedia
+import com.slimex.cloudcamera.domain.model.CloudMedia
+import com.slimex.cloudcamera.domain.model.MediaFilter
 import com.slimex.cloudcamera.domain.model.MediaKind
-import com.slimex.cloudcamera.ui.components.EmptyState
-import com.slimex.cloudcamera.ui.components.ErrorState
-import com.slimex.cloudcamera.ui.components.LoadingState
-import com.slimex.cloudcamera.ui.components.SegmentedSelector
-import com.slimex.cloudcamera.ui.components.SlimeXButton
-import com.slimex.cloudcamera.ui.components.SlimeXButtonStyle
+import com.slimex.cloudcamera.domain.model.MediaSort
 import com.slimex.cloudcamera.ui.components.SlimeXConfirmDialog
+import com.slimex.cloudcamera.ui.components.EmptyState
+import com.slimex.cloudcamera.ui.components.InlineBanner
+import com.slimex.cloudcamera.ui.components.PillTone
+import com.slimex.cloudcamera.ui.components.SlimeXChip
+import com.slimex.cloudcamera.ui.components.SlimeXTextField
 import com.slimex.cloudcamera.ui.components.SlimeXTopBar
+import com.slimex.cloudcamera.ui.components.StatusPill
 import com.slimex.cloudcamera.ui.theme.CharcoalElevated
 import com.slimex.cloudcamera.ui.theme.ErrorRed
 import com.slimex.cloudcamera.ui.theme.OutlineSoft
+import com.slimex.cloudcamera.ui.theme.PureBlack
 import com.slimex.cloudcamera.ui.theme.SlimePurple
 import com.slimex.cloudcamera.ui.theme.Spacing
 import com.slimex.cloudcamera.ui.theme.TextPrimary
@@ -72,327 +85,413 @@ import kotlinx.coroutines.delay
 import java.io.File
 
 /**
- * Unified gallery: media that lives in the user's Supabase bucket and media that is still
- * on the device. Cloud thumbnails load through short-lived signed URLs on a private bucket.
+ * Private cloud gallery: all / photos / videos, thumbnail grid, search, sort, full-screen viewer,
+ * video playback, details, delete and direct sharing. Thumbnails are decrypted into the app cache
+ * — nothing is ever written to a public folder.
  */
 @Composable
 fun CloudGalleryScreen(
     contentPadding: PaddingValues,
     onOpenCloudSetup: () -> Unit,
+    onOpenAccount: () -> Unit,
     viewModel: CloudGalleryViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var pendingDelete by remember { mutableStateOf<CloudMedia?>(null) }
+    var sortMenuOpen by remember { mutableStateOf(false) }
 
-    var pendingDelete by remember { mutableStateOf<CloudAsset?>(null) }
-
+    LaunchedEffect(state.error) {
+        if (state.error != null) {
+            delay(5000)
+            viewModel.consumeError()
+        }
+    }
     LaunchedEffect(state.message) {
         if (state.message != null) {
-            delay(2600)
+            delay(3200)
             viewModel.consumeMessage()
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(contentPadding),
-    ) {
-        SlimeXTopBar(
-            title = "Gallery",
-            subtitle = when (state.tab) {
-                CloudGalleryViewModel.Tab.CLOUD -> state.cloudHost ?: "Cloud not configured"
-                CloudGalleryViewModel.Tab.DEVICE -> "${state.localMedia.size} files on this device"
-            },
-            actions = {
-                IconButton(onClick = viewModel::refresh) {
-                    Icon(
-                        imageVector = Icons.Rounded.Refresh,
-                        contentDescription = "Refresh",
-                        tint = TextSecondary,
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
+            SlimeXTopBar(
+                title = "Cloud Gallery",
+                subtitle = when {
+                    state.needsSetup -> "Supabase not configured"
+                    state.needsSignIn -> "Not signed in"
+                    else -> "${state.assets.size} item${if (state.assets.size == 1) "" else "s"}"
+                },
+                actions = {
+                    IconButton(onClick = { viewModel.refresh() }, enabled = !state.loading) {
+                        Icon(
+                            imageVector = Icons.Rounded.Refresh,
+                            contentDescription = "Refresh",
+                            tint = if (state.loading) TextSecondary else SlimePurple,
+                        )
+                    }
+                },
+            )
+
+            when {
+                state.needsSetup -> EmptyState(
+                    icon = Icons.Rounded.CloudOff,
+                    title = "No cloud project yet",
+                    message = "Connect your Supabase project to see the photos and videos stored in " +
+                        "your private bucket.",
+                    actionLabel = "Open cloud setup",
+                    onAction = onOpenCloudSetup,
+                    modifier = Modifier.padding(top = 40.dp),
+                )
+
+                state.needsSignIn -> EmptyState(
+                    icon = Icons.Rounded.Login,
+                    title = "Sign in to continue",
+                    message = "Your media is private: the gallery uses your Supabase session to " +
+                        "read only your own files.",
+                    actionLabel = "Sign in",
+                    onAction = onOpenAccount,
+                    modifier = Modifier.padding(top = 40.dp),
+                )
+
+                else -> Column(modifier = Modifier.fillMaxSize()) {
+                    if (state.error != null) {
+                        InlineBanner(
+                            text = state.error.orEmpty(),
+                            tone = PillTone.RED,
+                            onDismiss = viewModel::consumeError,
+                            modifier = Modifier.padding(horizontal = Spacing.cardPadding),
+                        )
+                        Spacer(modifier = Modifier.height(Spacing.sm))
+                    }
+                    if (state.message != null) {
+                        InlineBanner(
+                            text = state.message.orEmpty(),
+                            tone = PillTone.GREEN,
+                            onDismiss = viewModel::consumeMessage,
+                            modifier = Modifier.padding(horizontal = Spacing.cardPadding),
+                        )
+                        Spacer(modifier = Modifier.height(Spacing.sm))
+                    }
+
+                    SlimeXTextField(
+                        value = state.search,
+                        onValueChange = viewModel::setSearch,
+                        label = "Search by file name",
+                        placeholder = "SLX_2026…",
+                        modifier = Modifier.padding(horizontal = Spacing.cardPadding),
+                        trailing = {
+                            if (state.search.isNotBlank()) {
+                                IconButton(onClick = viewModel::clearSearch) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Search,
+                                        contentDescription = "Clear search",
+                                        tint = TextSecondary,
+                                    )
+                                }
+                            }
+                        },
                     )
+
+                    Spacer(modifier = Modifier.height(Spacing.sm))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.cardPadding),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    ) {
+                        MediaFilter.entries.forEach { filter ->
+                            SlimeXChip(
+                                text = filter.label,
+                                selected = state.filter == filter,
+                                onClick = { viewModel.setFilter(filter) },
+                            )
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                        Box {
+                            SlimeXChip(
+                                text = "Sort",
+                                icon = Icons.Rounded.Sort,
+                                onClick = { sortMenuOpen = true },
+                            )
+                            DropdownMenu(
+                                expanded = sortMenuOpen,
+                                onDismissRequest = { sortMenuOpen = false },
+                            ) {
+                                MediaSort.entries.forEach { sort ->
+                                    DropdownMenuItem(
+                                        text = { Text(text = sort.label, color = TextPrimary) },
+                                        onClick = {
+                                            sortMenuOpen = false
+                                            viewModel.setSort(sort)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(Spacing.sm))
+
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        when {
+                            state.loading && state.assets.isEmpty() -> Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(color = SlimePurple)
+                            }
+
+                            state.assets.isEmpty() -> EmptyState(
+                                icon = Icons.Rounded.PhotoLibrary,
+                                title = "Nothing here yet",
+                                message = if (state.search.isNotBlank()) {
+                                    "No file matches \"${state.search}\"."
+                                } else {
+                                    "Captures appear here after their upload has been verified."
+                                },
+                                actionLabel = "Refresh",
+                                onAction = { viewModel.refresh() },
+                            )
+
+                            else -> LazyVerticalGrid(
+                                columns = GridCells.Fixed(3),
+                                contentPadding = PaddingValues(Spacing.cardPadding),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                items(state.assets, key = { it.id }) { media ->
+                                    GalleryTile(
+                                        media = media,
+                                        thumbnailPath = state.thumbnails[media.id],
+                                        onEnsureThumbnail = { viewModel.ensureThumbnail(media) },
+                                        onClick = { viewModel.openViewer(media) },
+                                    )
+                                }
+                            }
+                        }
+
+                        if (state.loading && state.assets.isNotEmpty()) {
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .align(Alignment.TopCenter),
+                                color = SlimePurple,
+                            )
+                        }
+                    }
                 }
-            },
-        )
-
-        SegmentedSelector(
-            options = listOf("Cloud", "On device"),
-            selectedIndex = if (state.tab == CloudGalleryViewModel.Tab.CLOUD) 0 else 1,
-            onSelected = { index ->
-                viewModel.selectTab(
-                    if (index == 0) CloudGalleryViewModel.Tab.CLOUD else CloudGalleryViewModel.Tab.DEVICE,
-                )
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Spacing.screenPadding, vertical = Spacing.sm),
-        )
-
-        when (state.tab) {
-            CloudGalleryViewModel.Tab.CLOUD -> CloudTab(
-                state = state,
-                onOpenCloudSetup = onOpenCloudSetup,
-                onRetry = viewModel::refresh,
-                onPreview = viewModel::openPreview,
-                onLoadThumbnail = viewModel::ensureSignedUrl,
-                onDeleteRequest = { asset -> pendingDelete = asset },
-            )
-
-            CloudGalleryViewModel.Tab.DEVICE -> DeviceTab(
-                media = state.localMedia,
-                onShare = viewModel::shareLocal,
-            )
-        }
-    }
-
-    state.preview?.let { asset ->
-        CloudPreviewDialog(
-            asset = asset,
-            imageUrl = state.signedUrls[asset.id],
-            deleting = state.deleting,
-            onDismiss = viewModel::closePreview,
-            onDelete = { pendingDelete = asset },
-        )
-    }
-
-    pendingDelete?.let { asset ->
-        SlimeXConfirmDialog(
-            title = "Delete from cloud?",
-            message = "This removes ${asset.fileName} from your Supabase bucket and the media table. " +
-                "The file on this device is not touched.",
-            confirmLabel = "Delete",
-            destructive = true,
-            onConfirm = {
-                pendingDelete = null
-                viewModel.deleteAsset(asset)
-            },
-            onDismiss = { pendingDelete = null },
-        )
-    }
-}
-
-@Composable
-private fun CloudTab(
-    state: CloudGalleryViewModel.State,
-    onOpenCloudSetup: () -> Unit,
-    onRetry: () -> Unit,
-    onPreview: (CloudAsset) -> Unit,
-    onLoadThumbnail: (CloudAsset) -> Unit,
-    onDeleteRequest: (CloudAsset) -> Unit,
-) {
-    when {
-        !state.cloudConfigured -> EmptyState(
-            icon = Icons.Rounded.Cloud,
-            title = "No cloud connected",
-            message = "Add your Supabase project URL and publishable key to see the media " +
-                "you have uploaded here.",
-            actionLabel = "Configure Supabase",
-            onAction = onOpenCloudSetup,
-            modifier = Modifier.padding(top = Spacing.xl),
-        )
-
-        state.loading && state.assets.isEmpty() -> LoadingState(message = "Loading your cloud media…")
-
-        state.error != null && state.assets.isEmpty() -> ErrorState(
-            message = state.error,
-            onRetry = onRetry,
-            secondaryLabel = "Open cloud settings",
-            onSecondary = onOpenCloudSetup,
-        )
-
-        state.assets.isEmpty() -> EmptyState(
-            icon = Icons.Rounded.PhotoLibrary,
-            title = "Nothing in the cloud yet",
-            message = "Captures you upload appear here. Take a photo and it will be queued automatically.",
-        )
-
-        else -> LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            contentPadding = PaddingValues(
-                start = Spacing.screenPadding,
-                end = Spacing.screenPadding,
-                top = Spacing.sm,
-                bottom = Spacing.xxxl,
-            ),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            items(state.assets, key = { it.id }) { asset ->
-                CloudTile(
-                    asset = asset,
-                    imageUrl = state.signedUrls[asset.id],
-                    onVisible = { onLoadThumbnail(asset) },
-                    onClick = { onPreview(asset) },
-                    onLongClick = { onDeleteRequest(asset) },
-                )
             }
         }
+
+        state.viewer?.let { viewer ->
+            MediaViewer(
+                viewer = viewer,
+                sharing = state.sharingId == viewer.media.id,
+                onClose = viewModel::closeViewer,
+                onShare = { viewModel.share(viewer.media) },
+                onDelete = { pendingDelete = viewer.media },
+            )
+        }
+    }
+
+    pendingDelete?.let { media ->
+        SlimeXConfirmDialog(
+            title = "Delete from cloud?",
+            message = "This removes \"${media.fileName}\" from your private bucket permanently. " +
+                "Uploads that are still pending are not affected.",
+            confirmLabel = "Delete",
+            destructive = true,
+            onDismiss = { pendingDelete = null },
+            onConfirm = {
+                pendingDelete = null
+                viewModel.delete(media)
+            },
+        )
     }
 }
 
 @Composable
-private fun CloudTile(
-    asset: CloudAsset,
-    imageUrl: String?,
-    onVisible: () -> Unit,
+private fun GalleryTile(
+    media: CloudMedia,
+    thumbnailPath: String?,
+    onEnsureThumbnail: () -> Unit,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
 ) {
-    LaunchedEffect(asset.id) { onVisible() }
+    LaunchedEffect(media.id) { onEnsureThumbnail() }
 
     Box(
         modifier = Modifier
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(CharcoalElevated)
-            .border(1.dp, OutlineSoft, RoundedCornerShape(6.dp))
+            .border(1.dp, OutlineSoft, RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
     ) {
-        if (imageUrl != null && asset.kind == MediaKind.PHOTO) {
+        if (thumbnailPath != null) {
             AsyncImage(
-                model = imageUrl,
-                contentDescription = asset.fileName,
+                model = File(thumbnailPath),
+                contentDescription = media.fileName,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(6.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = if (asset.kind == MediaKind.VIDEO) Icons.Rounded.Movie else Icons.Rounded.PhotoLibrary,
+                    imageVector = if (media.mediaType == MediaKind.VIDEO) Icons.Rounded.Movie
+                    else Icons.Rounded.PhotoLibrary,
                     contentDescription = null,
-                    tint = SlimePurple,
-                    modifier = Modifier.size(22.dp),
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = asset.fileName,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    tint = TextSecondary,
+                    modifier = Modifier.size(26.dp),
                 )
             }
         }
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.45f))
-                .padding(horizontal = 6.dp, vertical = 3.dp),
-        ) {
-            Text(
-                text = Formatters.bytes(asset.sizeBytes),
-                style = MaterialTheme.typography.labelSmall,
-                color = TextPrimary,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(4.dp)
-                .size(22.dp)
-                .clip(RoundedCornerShape(50))
-                .background(Color.Black.copy(alpha = 0.45f))
-                .clickable(onClick = onLongClick),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Delete,
-                contentDescription = "Delete",
-                tint = ErrorRed,
-                modifier = Modifier.size(13.dp),
-            )
+
+        if (media.mediaType == MediaKind.VIDEO) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.Black.copy(alpha = 0.65f))
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Movie,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(11.dp),
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = Formatters.bytes(media.fileSize),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun DeviceTab(
-    media: List<LocalMedia>,
-    onShare: (LocalMedia) -> Unit,
+private fun MediaViewer(
+    viewer: CloudGalleryViewModel.ViewerState,
+    sharing: Boolean,
+    onClose: () -> Unit,
+    onShare: () -> Unit,
+    onDelete: () -> Unit,
 ) {
-    if (media.isEmpty()) {
-        EmptyState(
-            icon = Icons.Rounded.PhotoLibrary,
-            title = "Nothing captured yet",
-            message = "Photos and videos you capture are stored privately inside the app.",
-            modifier = Modifier.padding(top = Spacing.xl),
-        )
-        return
-    }
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(3),
-        contentPadding = PaddingValues(
-            start = Spacing.screenPadding,
-            end = Spacing.screenPadding,
-            top = Spacing.sm,
-            bottom = Spacing.xxxl,
-        ),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        items(media, key = { it.filePath }) { item ->
-            Box(
-                modifier = Modifier
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(CharcoalElevated)
-                    .border(1.dp, OutlineSoft, RoundedCornerShape(6.dp)),
+    BackHandler { onClose() }
+
+    var showDetails by remember { mutableStateOf(true) }
+    val media = viewer.media
+
+    Box(modifier = Modifier.fillMaxSize().background(PureBlack)) {
+        when {
+            viewer.filePath != null && media.mediaType == MediaKind.PHOTO -> AsyncImage(
+                model = File(viewer.filePath),
+                contentDescription = media.fileName,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            viewer.filePath != null -> VideoPlayer(filePath = viewer.filePath, onTap = {
+                showDetails = !showDetails
+            })
+
+            else -> Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
             ) {
-                if (item.kind == MediaKind.PHOTO) {
-                    AsyncImage(
-                        model = File(item.filePath),
-                        contentDescription = item.fileName,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
+                if (viewer.error != null) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            imageVector = Icons.Rounded.Movie,
-                            contentDescription = item.fileName,
-                            tint = SlimePurple,
-                            modifier = Modifier.size(24.dp),
+                            imageVector = Icons.Rounded.CloudOff,
+                            contentDescription = null,
+                            tint = ErrorRed,
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = viewer.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextPrimary,
+                        )
+                    }
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = SlimePurple)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Downloading & decrypting… ${(viewer.progress * 100).toInt()}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
                         )
                     }
                 }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .background(Color.Black.copy(alpha = 0.45f))
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                ) {
-                    Text(
-                        text = Formatters.bytes(item.sizeBytes),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextPrimary,
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                        .size(22.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(Color.Black.copy(alpha = 0.45f))
-                        .clickable { onShare(item) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Share,
-                        contentDescription = "Share",
-                        tint = SlimePurple,
-                        modifier = Modifier.size(13.dp),
-                    )
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 10.dp)
+                .align(Alignment.TopCenter),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircleIconButton(
+                icon = Icons.Rounded.Visibility,
+                contentDescription = "Close viewer",
+                onClick = onClose,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            CircleIconButton(
+                icon = Icons.Rounded.Share,
+                contentDescription = "Share",
+                enabled = viewer.filePath != null && !sharing,
+                onClick = onShare,
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            CircleIconButton(
+                icon = Icons.Rounded.Delete,
+                contentDescription = "Delete",
+                tint = ErrorRed,
+                onClick = onDelete,
+            )
+        }
+
+        if (showDetails) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+            ) {
+                Text(
+                    text = media.fileName,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "${media.mediaType.value.replaceFirstChar { it.uppercase() }} · " +
+                        "${Formatters.bytes(media.fileSize)} · uploaded ${Formatters.dateTime(media.createdAtMillis)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatusPill(text = "AES-256-GCM", tone = PillTone.PURPLE)
+                    StatusPill(text = "Private bucket", tone = PillTone.NEUTRAL)
                 }
             }
         }
@@ -400,105 +499,51 @@ private fun DeviceTab(
 }
 
 @Composable
-private fun CloudPreviewDialog(
-    asset: CloudAsset,
-    imageUrl: String?,
-    deleting: Boolean,
-    onDismiss: () -> Unit,
-    onDelete: () -> Unit,
+private fun VideoPlayer(filePath: String, onTap: () -> Unit) {
+    AndroidView(
+        factory = { context ->
+            VideoView(context).apply {
+                setVideoPath(filePath)
+                val controller = MediaController(context)
+                controller.setAnchorView(this)
+                setMediaController(controller)
+                setOnPreparedListener { player ->
+                    player.isLooping = false
+                    start()
+                }
+                setOnClickListener { onTap() }
+            }
+        },
+        update = { view ->
+            if (!view.isPlaying && view.currentPosition == 0) {
+                runCatching { view.start() }
+            }
+        },
+        modifier = Modifier.fillMaxSize(),
+    )
+}
+
+@Composable
+private fun CircleIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    tint: Color = Color.White,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(22.dp))
-                .background(Color(0xFF0C0C10))
-                .navigationBarsPadding()
-                .padding(14.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = asset.fileName,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = buildString {
-                            append(Formatters.bytes(asset.sizeBytes))
-                            asset.capturedAtMillis?.let { append(" · ").append(Formatters.dateTime(it)) }
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextSecondary,
-                    )
-                }
-                IconButton(onClick = onDismiss) {
-                    Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = "Close",
-                        tint = TextSecondary,
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-
-            if (asset.kind == MediaKind.PHOTO) {
-                if (imageUrl != null) {
-                    AsyncImage(
-                        model = imageUrl,
-                        contentDescription = asset.fileName,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(0.75f)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(Color.Black),
-                    )
-                } else {
-                    LoadingState(message = "Fetching a signed URL…")
-                }
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(CharcoalElevated)
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Movie,
-                        contentDescription = null,
-                        tint = SlimePurple,
-                        modifier = Modifier.size(30.dp),
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "Video preview is not part of this build",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextPrimary,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "The file is stored safely in your bucket. Inline playback arrives " +
-                            "with the media player update.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary,
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-            SlimeXButton(
-                text = if (deleting) "Deleting…" else "Delete from cloud",
-                onClick = onDelete,
-                style = SlimeXButtonStyle.DANGER,
-                icon = Icons.Rounded.Delete,
-                loading = deleting,
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-        }
+    Box(
+        modifier = Modifier
+            .size(42.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.55f))
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = if (enabled) tint else tint.copy(alpha = 0.4f),
+            modifier = Modifier.size(20.dp),
+        )
     }
 }

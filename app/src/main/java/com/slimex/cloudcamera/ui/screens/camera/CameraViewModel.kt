@@ -5,17 +5,22 @@ import androidx.lifecycle.viewModelScope
 import com.slimex.cloudcamera.camera.CaptureMode
 import com.slimex.cloudcamera.camera.FlashSetting
 import com.slimex.cloudcamera.camera.LensFacing
+import com.slimex.cloudcamera.core.network.ConnectivityObserver
+import com.slimex.cloudcamera.domain.model.AppSettings
 import com.slimex.cloudcamera.domain.model.MediaKind
 import com.slimex.cloudcamera.domain.model.PhotoQuality
+import com.slimex.cloudcamera.domain.model.UploadStatus
 import com.slimex.cloudcamera.domain.model.VideoQualityPreference
 import com.slimex.cloudcamera.domain.repository.CloudConfigRepository
 import com.slimex.cloudcamera.domain.repository.LocalMediaRepository
 import com.slimex.cloudcamera.domain.repository.SettingsRepository
 import com.slimex.cloudcamera.domain.repository.UploadRepository
+import com.slimex.cloudcamera.storage.StagingStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
@@ -23,10 +28,12 @@ import javax.inject.Inject
 
 @HiltViewModel
 class CameraViewModel @Inject constructor(
+    private val staging: StagingStore,
     private val localMediaRepository: LocalMediaRepository,
     private val uploadRepository: UploadRepository,
     private val settingsRepository: SettingsRepository,
     private val cloudConfigRepository: CloudConfigRepository,
+    private val connectivity: ConnectivityObserver,
 ) : ViewModel() {
 
     data class State(
@@ -47,24 +54,35 @@ class CameraViewModel @Inject constructor(
         val cloudConfigured: Boolean = false,
         val message: String? = null,
         val error: String? = null,
-        val photoCount: Int = 0,
-        val videoCount: Int = 0,
-    )
+        val pendingPhotos: Int = 0,
+        val pendingVideos: Int = 0,
+        val queuedUploads: Int = 0,
+        val zoom: Float = 0f,
+        val zoomRatioLabel: String = "1.0x",
+        val maxZoom: Float = 1f,
+        val strictZeroLocalStorage: Boolean = false,
+        val online: Boolean = true,
+        val focusToken: Int = 0,
+    ) {
+        /** In strict zero-local-storage mode nothing may be captured while offline. */
+        val captureBlocked: Boolean
+            get() = strictZeroLocalStorage && !online && !isRecording
+
+        val statusLine: String
+            get() = when {
+                isRecording -> "Recording · tap the square to stop"
+                captureBlocked -> "Offline · zero local storage mode is on"
+                mode == CaptureMode.VIDEO -> "Tap the circle to start recording"
+                else -> "Tap the shutter to capture a JPEG"
+            }
+    }
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
     init {
         viewModelScope.launch {
-            settingsRepository.settings.collect { settings ->
-                _state.update {
-                    it.copy(
-                        photoQuality = settings.photoQuality,
-                        videoQuality = settings.videoQuality,
-                        recordAudio = settings.recordVideoAudio,
-                    )
-                }
-            }
+            settingsRepository.settings.collect { settings -> applySettings(settings) }
         }
         viewModelScope.launch {
             cloudConfigRepository.config.collect { config ->
@@ -72,16 +90,43 @@ class CameraViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            localMediaRepository.media.collect { media ->
+            localMediaRepository.pending.collect { media ->
                 _state.update {
                     it.copy(
-                        photoCount = media.count { item -> item.kind == MediaKind.PHOTO },
-                        videoCount = media.count { item -> item.kind == MediaKind.VIDEO },
+                        pendingPhotos = media.count { item -> item.kind == MediaKind.PHOTO },
+                        pendingVideos = media.count { item -> item.kind == MediaKind.VIDEO },
                     )
                 }
             }
         }
+        viewModelScope.launch {
+            uploadRepository.tasks.collect { tasks ->
+                _state.update {
+                    it.copy(
+                        queuedUploads = tasks.count { task ->
+                            task.status != UploadStatus.UPLOADED && task.status != UploadStatus.CANCELLED
+                        },
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            connectivity.status.collectLatest { status ->
+                _state.update { it.copy(online = status.online) }
+            }
+        }
         viewModelScope.launch { runCatching { localMediaRepository.refresh() } }
+    }
+
+    private fun applySettings(settings: AppSettings) {
+        _state.update {
+            it.copy(
+                photoQuality = settings.photoQuality,
+                videoQuality = settings.videoQuality,
+                recordAudio = settings.recordVideoAudio,
+                strictZeroLocalStorage = settings.strictZeroLocalStorage,
+            )
+        }
     }
 
     fun toggleMode() {
@@ -104,7 +149,7 @@ class CameraViewModel @Inject constructor(
                 LensFacing.FRONT -> it.hasFrontCamera
                 else -> it.hasBackCamera
             }
-            if (allowed) it.copy(lensFacing = next) else it
+            if (allowed) it.copy(lensFacing = next, zoom = 0f) else it
         }
     }
 
@@ -114,9 +159,23 @@ class CameraViewModel @Inject constructor(
 
     fun onCameraBound(hasFlash: Boolean, hasFront: Boolean, hasBack: Boolean) {
         _state.update {
-            it.copy(hasFlash = hasFlash, hasFrontCamera = hasFront, hasBackCamera = hasBack)
+            it.copy(
+                hasFlash = hasFlash,
+                hasFrontCamera = hasFront,
+                hasBackCamera = hasBack,
+                flash = if (hasFlash) it.flash else FlashSetting.OFF,
+            )
         }
     }
+
+    fun setZoom(fraction: Float, ratioLabel: String, maxRatio: Float) {
+        _state.update {
+            it.copy(zoom = fraction.coerceIn(0f, 1f), zoomRatioLabel = ratioLabel, maxZoom = maxRatio)
+        }
+    }
+
+    /** Bumped on every tap-to-focus so the screen can animate a focus ring. */
+    fun onFocusRequested() = _state.update { it.copy(focusToken = it.focusToken + 1) }
 
     fun setBusy(busy: Boolean) = _state.update { it.copy(busy = busy) }
 
@@ -140,46 +199,43 @@ class CameraViewModel @Inject constructor(
         _state.update { it.copy(isRecording = false, recordingMillis = 0L, busy = false) }
         if (error != null) {
             _state.update { it.copy(error = error) }
+            if (file != null && file.exists() && file.length() == 0L) runCatching { file.delete() }
             return
         }
-        if (file != null) {
-            onCaptureSaved(file, MediaKind.VIDEO, durationMillis)
-        }
+        if (file != null) onCaptureSaved(file, MediaKind.VIDEO, durationMillis)
     }
 
-    suspend fun newOutputFile(kind: MediaKind): File? =
-        localMediaRepository.createOutputFile(kind).getOrNull()
+    fun newOutputFile(kind: MediaKind): File = staging.newCaptureFile(kind)
 
     /**
-     * Persists state for a finished capture and enqueues the upload when a cloud project
-     * is configured. Without a configuration the file simply stays on the device.
+     * Registers a finished capture in the encrypted upload queue.
+     *
+     * The file never leaves app-private storage until the cloud copy is verified; when the
+     * project is not configured or the user is signed out the job simply waits in the queue.
      */
     fun onCaptureSaved(file: File, kind: MediaKind, durationMillis: Long?) {
         _state.update {
-            it.copy(
-                busy = false,
-                lastCapturePath = file.absolutePath,
-                lastCaptureKind = kind,
-            )
+            it.copy(busy = false, lastCapturePath = file.absolutePath, lastCaptureKind = kind)
         }
         viewModelScope.launch {
             runCatching { localMediaRepository.refresh() }
-            if (cloudConfigRepository.current() == null) {
-                _state.update {
-                    it.copy(message = "Saved on device · connect Supabase to upload")
-                }
-                return@launch
-            }
+            val settings = settingsRepository.current()
+            val configured = cloudConfigRepository.current() != null
+
             val result = uploadRepository.enqueue(
                 filePath = file.absolutePath,
                 kind = kind,
                 durationMillis = durationMillis,
                 capturedAt = System.currentTimeMillis(),
+                startImmediately = settings.autoUpload && configured,
             )
+
+            val noun = if (kind == MediaKind.PHOTO) "Photo" else "Video"
             val text = when {
-                result.isSuccess && kind == MediaKind.PHOTO -> "Photo saved · queued for upload"
-                result.isSuccess -> "Video saved · queued for upload"
-                else -> "Saved on device · ${result.errorOrNull()?.message.orEmpty()}"
+                result.isFailure -> "$noun saved privately · ${result.errorOrNull()?.message.orEmpty()}"
+                !configured -> "$noun encrypted · set up Supabase to upload"
+                !settings.autoUpload -> "$noun encrypted · uploads are paused in Settings"
+                else -> "$noun encrypted · upload queued"
             }
             _state.update { it.copy(message = text) }
         }

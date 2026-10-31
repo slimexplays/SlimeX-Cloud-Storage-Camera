@@ -2,6 +2,7 @@ package com.slimex.cloudcamera.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.slimex.cloudcamera.domain.repository.AuthRepository
 import com.slimex.cloudcamera.domain.repository.SettingsRepository
 import com.slimex.cloudcamera.domain.repository.UploadRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -26,6 +27,7 @@ sealed interface AppStartupState {
 class AppStartupViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val uploadRepository: UploadRepository,
+    private val authRepository: AuthRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<AppStartupState>(AppStartupState.Loading)
@@ -40,6 +42,8 @@ class AppStartupViewModel @Inject constructor(
             _state.value = AppStartupState.Ready(settings?.onboardingCompleted ?: false)
         }
         viewModelScope.launch {
+            // Restore the encrypted session so uploads can resume without a sign-in prompt.
+            runCatching { authRepository.restore() }
             // Fire and forget: resumes any pending uploads after a cold start.
             runCatching { async { uploadRepository.resumePending() }.await() }
         }

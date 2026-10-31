@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Exposes only the app-private media folder to the FileProvider so captures can be
-  shared through the system chooser. No other app data is reachable.
+  Exposes ONLY the private cache folder used for Sharesheet hand-offs.
+
+  Decrypted media is copied to cache/share/<id>.<ext> immediately before it is shared,
+  handed to the receiving app as a content:// URI with a temporary read grant, and removed
+  later by ShareCleanupWorker. No other app data — pending captures, keys, tokens — is
+  reachable through the provider.
 -->
 <paths>
-    <files-path
-        name="slimex_media"
-        path="media/" />
+    <cache-path
+        name="slimex_share"
+        path="share/" />
 </paths>

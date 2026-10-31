@@ -1,96 +1,215 @@
 package com.slimex.cloudcamera.data.repository
 
-import com.slimex.cloudcamera.cloud.SupabaseRestClient
-import com.slimex.cloudcamera.core.constants.AppConstants
+import com.slimex.cloudcamera.cloud.CloudSessionProvider
+import com.slimex.cloudcamera.cloud.SupabaseDataApi
+import com.slimex.cloudcamera.cloud.SupabaseStorageApi
 import com.slimex.cloudcamera.core.result.AppFailure
 import com.slimex.cloudcamera.core.result.AppResult
-import com.slimex.cloudcamera.core.result.map
-import com.slimex.cloudcamera.domain.model.CloudAsset
-import com.slimex.cloudcamera.domain.model.MediaKind
+import com.slimex.cloudcamera.core.util.DispatchersProvider
+import com.slimex.cloudcamera.domain.model.CloudMedia
+import com.slimex.cloudcamera.domain.model.MediaFilter
+import com.slimex.cloudcamera.domain.model.MediaSort
 import com.slimex.cloudcamera.domain.model.RemoteUsage
-import com.slimex.cloudcamera.domain.repository.CloudConfigRepository
 import com.slimex.cloudcamera.domain.repository.CloudGalleryRepository
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
-import java.time.OffsetDateTime
+import com.slimex.cloudcamera.media.ThumbnailFactory
+import com.slimex.cloudcamera.security.MediaCrypto
+import com.slimex.cloudcamera.security.MediaKey
+import com.slimex.cloudcamera.storage.StagingStore
+import kotlinx.coroutines.withContext
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class CloudGalleryRepositoryImpl @Inject constructor(
-    private val configRepository: CloudConfigRepository,
-    private val client: SupabaseRestClient,
+    private val cloud: CloudSessionProvider,
+    private val data: SupabaseDataApi,
+    private val storage: SupabaseStorageApi,
+    private val crypto: MediaCrypto,
+    private val staging: StagingStore,
+    private val thumbnails: ThumbnailFactory,
+    private val dispatchers: DispatchersProvider,
 ) : CloudGalleryRepository {
 
-    override suspend fun listAssets(limit: Int): AppResult<List<CloudAsset>> {
-        val config = configRepository.current()
-            ?: return AppResult.Failure(AppFailure.notConfigured())
-        return client
-            .selectRows(config, query = "deleted_at=is.null&order=captured_at.desc", limit = limit)
-            .map { rows -> rows.mapNotNull(::toAsset) }
-    }
-
-    override suspend fun signedUrl(asset: CloudAsset, expiresInSeconds: Long): AppResult<String> {
-        val config = configRepository.current()
-            ?: return AppResult.Failure(AppFailure.notConfigured())
-        return client.createSignedUrl(
-            config = config.copy(bucket = asset.bucket.ifBlank { config.bucket }),
-            objectPath = asset.storagePath,
-            expiresInSeconds = expiresInSeconds,
+    override suspend fun list(
+        filter: MediaFilter,
+        sort: MediaSort,
+        search: String?,
+        limit: Int,
+        offset: Int,
+    ): AppResult<List<CloudMedia>> {
+        val context = when (val result = cloud.require()) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+        }
+        return data.listMedia(
+            config = context.config,
+            accessToken = context.accessToken,
+            userId = context.userId,
+            filter = filter,
+            sort = sort,
+            search = search,
+            limit = limit,
+            offset = offset,
         )
     }
 
-    override suspend fun deleteAsset(asset: CloudAsset): AppResult<Unit> {
-        val config = configRepository.current()
-            ?: return AppResult.Failure(AppFailure.notConfigured())
-        val objectResult = client.deleteObject(config.copy(bucket = asset.bucket.ifBlank { config.bucket }), asset.storagePath)
-        if (objectResult is AppResult.Failure) return objectResult
-        return client.deleteRow(config, asset.id)
+    override suspend fun usage(): AppResult<RemoteUsage> {
+        val context = when (val result = cloud.require()) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+        }
+        return data.usage(context.config, context.accessToken, context.userId)
     }
 
-    override suspend fun remoteUsage(): AppResult<RemoteUsage> {
-        val assets = listAssets(limit = 1_000)
-        return assets.map { list ->
-            RemoteUsage(
-                assetCount = list.size,
-                photoCount = list.count { it.kind == MediaKind.PHOTO },
-                videoCount = list.count { it.kind == MediaKind.VIDEO },
-                totalBytes = list.sumOf { it.sizeBytes },
+    override suspend fun delete(media: CloudMedia): AppResult<Unit> {
+        val context = when (val result = cloud.require()) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+        }
+
+        val keys = buildList {
+            add(media.objectKey)
+            media.thumbnailPath?.takeIf { it.isNotBlank() }?.let { add(it.trimStart('/')) }
+        }
+
+        val removed = storage.remove(context.config, context.accessToken, keys)
+        // A missing object is fine — the goal is "gone", not "we deleted something".
+        if (removed is AppResult.Failure && !isMissing(removed.error)) return removed
+
+        val row = data.deleteMedia(context.config, context.accessToken, media.id, context.userId)
+        if (row is AppResult.Failure) return row
+
+        withContext(dispatchers.io) {
+            runCatching { staging.thumbnailFile(media.id).delete() }
+            runCatching { staging.viewerFile(media.id, media.mediaType).delete() }
+            runCatching { staging.shareFile(media.id, media.mediaType).delete() }
+        }
+        return AppResult.Success(Unit)
+    }
+
+    override suspend fun thumbnail(media: CloudMedia): AppResult<File?> {
+        val cached = staging.thumbnailFile(media.id)
+        if (cached.exists() && cached.length() > 0) return AppResult.Success(cached)
+
+        val thumbPath = media.thumbnailPath?.takeIf { it.isNotBlank() }
+        val key = media.thumbnailKey
+        val nonce = media.thumbnailNonce
+
+        if (thumbPath != null && key != null && nonce != null) {
+            val context = when (val result = cloud.require()) {
+                is AppResult.Success -> result.data
+                is AppResult.Failure -> return AppResult.Success(null)
+            }
+            val scratch = staging.scratchFile("thumb")
+            val result = storage.download(context.config, context.accessToken, thumbPath, scratch)
+            if (result is AppResult.Success) {
+                val decrypted = crypto.decrypt(scratch, cached, MediaKey(key, nonce))
+                runCatching { scratch.delete() }
+                if (decrypted is AppResult.Success) return AppResult.Success(cached)
+            } else {
+                runCatching { scratch.delete() }
+            }
+        }
+
+        // No sidecar preview (e.g. a row created elsewhere): build one from the media itself,
+        // but only for photos so opening the gallery never downloads a whole video.
+        if (media.mediaType == com.slimex.cloudcamera.domain.model.MediaKind.PHOTO) {
+            return when (val opened = open(media)) {
+                is AppResult.Success -> when (val created = thumbnails.create(opened.data, media.mediaType, cached)) {
+                    is AppResult.Success -> AppResult.Success(created.data)
+                    is AppResult.Failure -> AppResult.Success(null)
+                }
+
+                is AppResult.Failure -> AppResult.Success(null)
+            }
+        }
+        return AppResult.Success(null)
+    }
+
+    override suspend fun open(media: CloudMedia, onProgress: (Float) -> Unit): AppResult<File> {
+        val cached = staging.viewerFile(media.id, media.mediaType)
+        if (cached.exists() && cached.length() > 0) {
+            onProgress(1f)
+            return AppResult.Success(cached)
+        }
+
+        val context = when (val result = cloud.require()) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+        }
+        if (!media.encrypted) {
+            return AppResult.Failure(
+                AppFailure.storage("This file was stored unencrypted, so it cannot be opened safely."),
             )
+        }
+        val key = media.encryptionKey
+        val nonce = media.encryptionNonce
+        if (key.isNullOrBlank() || nonce.isNullOrBlank()) {
+            return AppResult.Failure(AppFailure.storage("The decryption key for this file is missing."))
+        }
+
+        val scratch = staging.scratchFile("download")
+        val downloaded = storage.download(
+            config = context.config,
+            accessToken = context.accessToken,
+            objectPath = media.objectKey,
+            target = scratch,
+            onProgress = { fraction -> onProgress(fraction * 0.9f) },
+        )
+        if (downloaded is AppResult.Failure) {
+            runCatching { scratch.delete() }
+            return downloaded
+        }
+
+        val decrypted = when (val result = crypto.decrypt(scratch, cached, MediaKey(key, nonce))) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> {
+                runCatching { scratch.delete() }
+                return result
+            }
+        }
+        runCatching { scratch.delete() }
+
+        media.checksum?.takeIf { it.isNotBlank() }?.let { expected ->
+            if (!crypto.verify(decrypted, expected)) {
+                runCatching { decrypted.delete() }
+                return AppResult.Failure(
+                    AppFailure.storage("The decrypted file did not match its recorded checksum."),
+                )
+            }
+        }
+
+        onProgress(1f)
+        return AppResult.Success(decrypted)
+    }
+
+    override suspend fun prepareForShare(media: CloudMedia): AppResult<File> {
+        val opened = when (val result = open(media)) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+        }
+        val target = staging.shareFile(media.id, media.mediaType)
+        return withContext(dispatchers.io) {
+            try {
+                target.parentFile?.mkdirs()
+                if (target.exists()) target.delete()
+                opened.inputStream().use { input ->
+                    target.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
+                }
+                if (!target.exists() || target.length() == 0L) {
+                    AppResult.Failure(AppFailure.storage("Could not prepare the file for sharing."))
+                } else {
+                    AppResult.Success(target)
+                }
+            } catch (t: Throwable) {
+                runCatching { target.delete() }
+                AppResult.Failure(AppFailure.storage(t.message ?: "Could not prepare the file for sharing.", t))
+            }
         }
     }
 
-    private fun toAsset(row: JsonObject): CloudAsset? {
-        val id = row.string("id") ?: return null
-        val path = row.string("storage_path") ?: return null
-        return CloudAsset(
-            id = id,
-            kind = MediaKind.fromValue(row.string("kind")),
-            bucket = row.string("bucket") ?: AppConstants.DEFAULT_BUCKET,
-            storagePath = path,
-            fileName = row.string("file_name") ?: path.substringAfterLast('/'),
-            mimeType = row.string("mime_type"),
-            sizeBytes = row.long("size_bytes") ?: 0L,
-            durationMillis = row.long("duration_ms"),
-            capturedAtMillis = row.string("captured_at")?.let(::parseIso),
-            width = row.int("width"),
-            height = row.int("height"),
-        )
-    }
-
-    private fun parseIso(value: String): Long? =
-        runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }
-            .recoverCatching { java.time.Instant.parse(value).toEpochMilli() }
-            .getOrNull()
-
-    private fun JsonObject.string(key: String): String? =
-        runCatching { this[key]?.jsonPrimitive?.content }.getOrNull()?.takeIf { it.isNotBlank() && it != "null" }
-
-    private fun JsonObject.long(key: String): Long? =
-        runCatching { this[key]?.jsonPrimitive?.longOrNull }.getOrNull()
-
-    private fun JsonObject.int(key: String): Int? =
-        runCatching { this[key]?.jsonPrimitive?.intOrNull }.getOrNull()
+    private fun isMissing(failure: AppFailure): Boolean =
+        failure.message.contains("not found", ignoreCase = true) ||
+            failure.message.contains("404")
 }

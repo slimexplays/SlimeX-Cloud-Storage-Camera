@@ -4,6 +4,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,10 +14,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -30,6 +33,8 @@ import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -43,9 +48,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -62,13 +71,11 @@ import com.slimex.cloudcamera.domain.model.MediaKind
 import com.slimex.cloudcamera.ui.AppPermissions
 import com.slimex.cloudcamera.ui.components.BrandMark
 import com.slimex.cloudcamera.ui.components.CircularActionButton
-import com.slimex.cloudcamera.ui.components.SegmentedSelector
 import com.slimex.cloudcamera.ui.components.SlimeXButton
 import com.slimex.cloudcamera.ui.components.SlimeXButtonStyle
 import com.slimex.cloudcamera.ui.rememberPermissionState
 import com.slimex.cloudcamera.ui.theme.ErrorRed
 import com.slimex.cloudcamera.ui.theme.PureBlack
-import com.slimex.cloudcamera.ui.theme.SlimePurple
 import com.slimex.cloudcamera.ui.theme.TextPrimary
 import com.slimex.cloudcamera.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
@@ -135,8 +142,20 @@ fun CameraScreen(
                 videoQuality = state.videoQuality,
             )) {
                 is AppResult.Failure -> viewModel.onError(result.error.message)
-                is AppResult.Success -> Unit
+                is AppResult.Success -> viewModel.setZoom(
+                    fraction = 0f,
+                    ratioLabel = "1.0x",
+                    maxRatio = controller.maxZoomRatio(),
+                )
             }
+        }
+    }
+
+    LaunchedEffect(state.mode, state.flash, state.hasFlash) {
+        if (state.mode == CaptureMode.VIDEO) {
+            controller.setTorch(state.hasFlash && state.flash != FlashSetting.OFF)
+        } else {
+            controller.stopTorch()
         }
     }
 
@@ -148,11 +167,14 @@ fun CameraScreen(
     }
 
     val capturePhoto: () -> Unit = {
-        if (!state.busy && !state.isRecording) {
+        if (state.captureBlocked) {
+            viewModel.onError("Offline: turn off zero local storage mode to capture, or reconnect.")
+        } else if (!state.busy && !state.isRecording) {
             scope.launch {
                 viewModel.setBusy(true)
-                val file = viewModel.newOutputFile(MediaKind.PHOTO)
-                if (file == null) {
+                val file = try {
+                    viewModel.newOutputFile(MediaKind.PHOTO)
+                } catch (t: Throwable) {
                     viewModel.onError("Could not create a file for the photo.")
                     return@launch
                 }
@@ -166,7 +188,9 @@ fun CameraScreen(
     }
 
     val toggleRecording: () -> Unit = {
-        if (state.isRecording) {
+        if (state.captureBlocked) {
+            viewModel.onError("Offline: turn off zero local storage mode to capture, or reconnect.")
+        } else if (state.isRecording) {
             controller.stopRecording()
         } else if (!state.busy) {
             val wantsAudio = state.recordAudio
@@ -175,8 +199,9 @@ fun CameraScreen(
                 permissions.request(AppPermissions.MICROPHONE)
             }
             scope.launch {
-                val file = viewModel.newOutputFile(MediaKind.VIDEO)
-                if (file == null) {
+                val file = try {
+                    viewModel.newOutputFile(MediaKind.VIDEO)
+                } catch (t: Throwable) {
                     viewModel.onError("Could not create a file for the video.")
                     return@launch
                 }
@@ -211,6 +236,44 @@ fun CameraScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
+            // Tap-to-focus / tap-to-meter with a short-lived focus ring.
+            var focusPoint by remember { mutableStateOf<Offset?>(null) }
+            var previewSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+            LaunchedEffect(state.focusToken) {
+                if (focusPoint != null) {
+                    delay(700)
+                    focusPoint = null
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { previewSize = it }
+                    .pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            if (previewSize.width > 0 && previewSize.height > 0) {
+                                controller.focusAt(offset.x, offset.y)
+                                focusPoint = offset
+                                viewModel.onFocusRequested()
+                            }
+                        }
+                    },
+            )
+
+            focusPoint?.let { point ->
+                val density = LocalDensity.current
+                Box(
+                    modifier = Modifier
+                        .offset(
+                            x = with(density) { point.x.toDp() } - 32.dp,
+                            y = with(density) { point.y.toDp() } - 32.dp,
+                        )
+                        .size(64.dp)
+                        .border(1.5.dp, Color.White.copy(alpha = 0.9f), CircleShape),
+                )
+            }
+
             // Top scrim keeps the controls legible over bright scenes without hiding the frame.
             Box(
                 modifier = Modifier
@@ -238,7 +301,7 @@ fun CameraScreen(
                     contentDescription = "Close camera",
                 )
                 Spacer(modifier = Modifier.weight(1f))
-                if (state.hasFlash && state.mode == CaptureMode.PHOTO) {
+                if (state.hasFlash) {
                     CircularActionButton(
                         onClick = viewModel::cycleFlash,
                         icon = when (state.flash) {
@@ -247,7 +310,7 @@ fun CameraScreen(
                             FlashSetting.OFF -> Icons.Rounded.FlashOff
                         },
                         contentDescription = "Flash ${state.flash.label}",
-                        tint = if (state.flash == FlashSetting.OFF) TextPrimary else SlimePurple,
+                        tint = if (state.flash == FlashSetting.OFF) TextSecondary else Color.White,
                     )
                 }
             }
@@ -280,8 +343,26 @@ fun CameraScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
-                SegmentedSelector(
-                    options = listOf("Photo", "Video"),
+                if (state.maxZoom > 1.05f) {
+                    ZoomControl(
+                        value = state.zoom,
+                        maxZoomRatio = state.maxZoom,
+                        onChange = { fraction ->
+                            controller.setLinearZoom(fraction)
+                            val ratio = 1f + fraction * (state.maxZoom - 1f).coerceAtLeast(0f)
+                            viewModel.setZoom(
+                                fraction = fraction,
+                                ratioLabel = String.format(java.util.Locale.US, "%.1fx", ratio),
+                                maxRatio = state.maxZoom,
+                            )
+                        },
+                        modifier = Modifier
+                            .width(230.dp)
+                            .padding(bottom = 10.dp),
+                    )
+                }
+
+                CameraModeSelector(
                     selectedIndex = if (state.mode == CaptureMode.PHOTO) 0 else 1,
                     onSelected = { index ->
                         viewModel.setMode(if (index == 0) CaptureMode.PHOTO else CaptureMode.VIDEO)
@@ -305,6 +386,7 @@ fun CameraScreen(
                     ShutterButton(
                         isRecording = state.isRecording,
                         busy = state.busy,
+                        enabled = !state.captureBlocked,
                         isVideoMode = state.mode == CaptureMode.VIDEO,
                         onClick = {
                             if (state.mode == CaptureMode.PHOTO) capturePhoto() else toggleRecording()
@@ -322,14 +404,20 @@ fun CameraScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = when {
-                        state.isRecording -> "Recording · tap the square to stop"
-                        state.mode == CaptureMode.VIDEO -> "Tap the circle to start recording"
-                        else -> "Tap the shutter to capture a JPEG"
-                    },
+                    text = state.statusLine,
                     style = MaterialTheme.typography.labelSmall,
-                    color = TextSecondary,
+                    color = if (state.captureBlocked) ErrorRed else TextSecondary,
+                    textAlign = TextAlign.Center,
                 )
+                if (state.pendingPhotos + state.pendingVideos > 0 || state.queuedUploads > 0) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "${state.pendingPhotos + state.pendingVideos} waiting locally · " +
+                            "${state.queuedUploads} in the upload queue",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary,
+                    )
+                }
             }
         }
 
@@ -403,6 +491,7 @@ private fun CameraPermissionPanel(onRequest: () -> Unit, onBack: () -> Unit) {
 private fun ShutterButton(
     isRecording: Boolean,
     busy: Boolean,
+    enabled: Boolean,
     isVideoMode: Boolean,
     onClick: () -> Unit,
 ) {
@@ -411,7 +500,7 @@ private fun ShutterButton(
             .size(78.dp)
             .clip(CircleShape)
             .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
-            .clickable(enabled = !busy, onClick = onClick)
+            .clickable(enabled = !busy && enabled, onClick = onClick)
             .padding(7.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -463,7 +552,7 @@ private fun GalleryShortcut(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        val path = lastCapturePath
+        val path = lastCapturePath?.takeIf { File(it).exists() }
         if (path != null && lastCaptureKind == MediaKind.PHOTO) {
             AsyncImage(
                 model = File(path),
@@ -479,6 +568,75 @@ private fun GalleryShortcut(
                 modifier = Modifier.size(22.dp),
             )
         }
+    }
+}
+
+/** White-on-black mode switch — the camera screen deliberately uses no purple surfaces. */
+@Composable
+private fun CameraModeSelector(
+    selectedIndex: Int,
+    onSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(Color.Black.copy(alpha = 0.45f))
+            .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(50))
+            .padding(4.dp),
+    ) {
+        listOf("Photo", "Video").forEachIndexed { index, label ->
+            val selected = index == selectedIndex
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (selected) Color.White else Color.Transparent)
+                    .clickable { onSelected(index) }
+                    .padding(vertical = 9.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (selected) Color.Black else Color.White,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ZoomControl(
+    value: Float,
+    maxZoomRatio: Float,
+    onChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "1x",
+            style = MaterialTheme.typography.labelSmall,
+            color = TextSecondary,
+        )
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = Color.White.copy(alpha = 0.9f),
+                inactiveTrackColor = Color.White.copy(alpha = 0.3f),
+            ),
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = String.format(java.util.Locale.US, "%.1fx", maxZoomRatio),
+            style = MaterialTheme.typography.labelSmall,
+            color = TextSecondary,
+        )
     }
 }
 
@@ -511,8 +669,8 @@ private fun MessagePill(text: String) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(SlimePurple.copy(alpha = 0.2f))
-            .border(1.dp, SlimePurple.copy(alpha = 0.5f), RoundedCornerShape(50))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(50))
             .padding(horizontal = 14.dp, vertical = 7.dp),
     ) {
         Text(

@@ -14,6 +14,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Lock
@@ -62,6 +64,7 @@ fun SettingsScreen(
     onOpenCameraPreferences: () -> Unit,
     onOpenAbout: () -> Unit,
     onOpenStorage: () -> Unit,
+    onOpenAccount: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -105,6 +108,19 @@ fun SettingsScreen(
                 SectionHeader(title = "Cloud")
                 Spacer(modifier = Modifier.height(Spacing.sm))
                 SlimeCard(contentPadding = PaddingValues(0.dp)) {
+                    SettingRow(
+                        title = "Account",
+                        subtitle = state.signedInEmail ?: "Sign in to upload and browse your library",
+                        icon = Icons.Rounded.Person,
+                        onClick = onOpenAccount,
+                        showDivider = true,
+                        trailing = {
+                            StatusPill(
+                                text = if (state.signedInEmail != null) "Signed in" else "Sign in",
+                                tone = if (state.signedInEmail != null) PillTone.GREEN else PillTone.AMBER,
+                            )
+                        },
+                    )
                     SettingRow(
                         title = "Supabase configuration",
                         subtitle = when (val status = state.cloudStatus) {
@@ -150,10 +166,22 @@ fun SettingsScreen(
                         title = "Wi-Fi only",
                         subtitle = "Hold uploads until you are on Wi-Fi",
                         icon = Icons.Rounded.Wifi,
+                        showDivider = true,
                         trailing = {
                             SlimeXSwitch(
                                 checked = state.settings.wifiOnlyUpload,
                                 onCheckedChange = viewModel::setWifiOnly,
+                            )
+                        },
+                    )
+                    SettingRow(
+                        title = "Zero local storage",
+                        subtitle = "Block capture while offline so nothing waits on the device",
+                        icon = Icons.Rounded.CloudOff,
+                        trailing = {
+                            SlimeXSwitch(
+                                checked = state.settings.strictZeroLocalStorage,
+                                onCheckedChange = viewModel::setStrictZeroLocalStorage,
                             )
                         },
                     )

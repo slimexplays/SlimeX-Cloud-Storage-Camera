@@ -32,6 +32,8 @@ data class AppSettings(
     val onboardingCompleted: Boolean = false,
     val autoUpload: Boolean = true,
     val wifiOnlyUpload: Boolean = false,
+    /** Part 2: block capture while offline instead of buffering media on the device. */
+    val strictZeroLocalStorage: Boolean = false,
     val photoQuality: PhotoQuality = PhotoQuality.BALANCED,
     val videoQuality: VideoQualityPreference = VideoQualityPreference.AUTO,
     val recordVideoAudio: Boolean = true,

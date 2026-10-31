@@ -3,11 +3,15 @@ package com.slimex.cloudcamera.ui.screens.storage
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.slimex.cloudcamera.core.result.AppResult
+import com.slimex.cloudcamera.domain.model.AuthStatus
 import com.slimex.cloudcamera.domain.model.LocalStorageSummary
 import com.slimex.cloudcamera.domain.model.RemoteUsage
+import com.slimex.cloudcamera.domain.model.UploadQueueSummary
+import com.slimex.cloudcamera.domain.repository.AuthRepository
 import com.slimex.cloudcamera.domain.repository.CloudConfigRepository
 import com.slimex.cloudcamera.domain.repository.CloudGalleryRepository
 import com.slimex.cloudcamera.domain.repository.LocalMediaRepository
+import com.slimex.cloudcamera.domain.repository.UploadRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,15 +25,19 @@ class StorageViewModel @Inject constructor(
     private val localMediaRepository: LocalMediaRepository,
     private val cloudGalleryRepository: CloudGalleryRepository,
     private val cloudConfigRepository: CloudConfigRepository,
+    private val uploadRepository: UploadRepository,
+    private val authRepository: AuthRepository,
 ) : ViewModel() {
 
     data class State(
         val loading: Boolean = true,
         val summary: LocalStorageSummary = LocalStorageSummary(),
+        val queue: UploadQueueSummary = UploadQueueSummary(),
         val remoteUsage: RemoteUsage? = null,
         val remoteLoading: Boolean = false,
         val remoteError: String? = null,
         val cloudConfigured: Boolean = false,
+        val signedIn: Boolean = false,
         val message: String? = null,
     )
 
@@ -45,12 +53,21 @@ class StorageViewModel @Inject constructor(
                 }
             }
         }
+        viewModelScope.launch {
+            authRepository.status.collect { status ->
+                _state.update { it.copy(signedIn = status is AuthStatus.SignedIn) }
+            }
+        }
+        viewModelScope.launch {
+            uploadRepository.summary.collect { summary ->
+                _state.update { it.copy(queue = summary) }
+            }
+        }
         refresh()
     }
 
     fun refresh() {
         viewModelScope.launch {
-            runCatching { localMediaRepository.refresh() }
             when (val result = localMediaRepository.summary()) {
                 is AppResult.Success -> _state.update { it.copy(loading = false, summary = result.data) }
                 is AppResult.Failure -> _state.update {
@@ -64,10 +81,11 @@ class StorageViewModel @Inject constructor(
     private fun loadRemoteUsage() {
         viewModelScope.launch {
             _state.update { it.copy(remoteLoading = true, remoteError = null) }
-            when (val result = cloudGalleryRepository.remoteUsage()) {
+            when (val result = cloudGalleryRepository.usage()) {
                 is AppResult.Success -> _state.update {
-                    it.copy(remoteLoading = false, remoteUsage = result.data)
+                    it.copy(remoteLoading = false, remoteUsage = result.data, remoteError = null)
                 }
+
                 is AppResult.Failure -> _state.update {
                     it.copy(remoteLoading = false, remoteError = result.error.message)
                 }
@@ -75,29 +93,23 @@ class StorageViewModel @Inject constructor(
         }
     }
 
-    fun clearThumbnails() {
+    /** Clears thumbnails, viewer and share caches — never the un-uploaded captures. */
+    fun clearCache() {
         viewModelScope.launch {
-            when (val result = localMediaRepository.clearThumbnails()) {
+            when (val result = localMediaRepository.clearCache()) {
                 is AppResult.Success -> {
-                    _state.update { it.copy(message = "Cleared ${result.data / 1024} KB of cached previews") }
+                    _state.update {
+                        it.copy(message = "Freed ${formatFreed(result.data)} of cached files")
+                    }
                     refresh()
                 }
+
                 is AppResult.Failure -> _state.update { it.copy(message = result.error.message) }
             }
         }
     }
 
-    fun deleteAllLocal() {
-        viewModelScope.launch {
-            when (val result = localMediaRepository.deleteAll()) {
-                is AppResult.Success -> {
-                    _state.update { it.copy(message = "Deleted ${result.data} local files") }
-                    refresh()
-                }
-                is AppResult.Failure -> _state.update { it.copy(message = result.error.message) }
-            }
-        }
-    }
+    private fun formatFreed(bytes: Long): String = com.slimex.cloudcamera.core.util.Formatters.bytes(bytes)
 
     fun consumeMessage() = _state.update { it.copy(message = null) }
 }

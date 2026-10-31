@@ -3,7 +3,9 @@ package com.slimex.cloudcamera.ui.screens.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.slimex.cloudcamera.domain.model.AppSettings
+import com.slimex.cloudcamera.domain.model.AuthStatus
 import com.slimex.cloudcamera.domain.model.CloudSetupStatus
+import com.slimex.cloudcamera.domain.repository.AuthRepository
 import com.slimex.cloudcamera.domain.repository.CloudConfigRepository
 import com.slimex.cloudcamera.domain.repository.SettingsRepository
 import com.slimex.cloudcamera.security.SecureStore
@@ -19,6 +21,7 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val cloudConfigRepository: CloudConfigRepository,
+    private val authRepository: AuthRepository,
     secureStore: SecureStore,
 ) : ViewModel() {
 
@@ -26,6 +29,7 @@ class SettingsViewModel @Inject constructor(
         val settings: AppSettings = AppSettings(),
         val cloudStatus: CloudSetupStatus = CloudSetupStatus.Loading,
         val secureStorageWarning: String? = secureStore.storageWarning,
+        val signedInEmail: String? = null,
     )
 
     private val _state = MutableStateFlow(State())
@@ -42,6 +46,11 @@ class SettingsViewModel @Inject constructor(
                 _state.update { it.copy(cloudStatus = status) }
             }
         }
+        viewModelScope.launch {
+            authRepository.status.collect { status ->
+                _state.update { it.copy(signedInEmail = (status as? AuthStatus.SignedIn)?.email) }
+            }
+        }
     }
 
     fun setAutoUpload(enabled: Boolean) {
@@ -50,6 +59,11 @@ class SettingsViewModel @Inject constructor(
 
     fun setWifiOnly(enabled: Boolean) {
         viewModelScope.launch { runCatching { settingsRepository.setWifiOnlyUpload(enabled) } }
+    }
+
+    /** Blocks capture while offline so no media is buffered on the device at all. */
+    fun setStrictZeroLocalStorage(enabled: Boolean) {
+        viewModelScope.launch { runCatching { settingsRepository.setStrictZeroLocalStorage(enabled) } }
     }
 
     fun setRecordAudio(enabled: Boolean) {

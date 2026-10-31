@@ -15,8 +15,9 @@
 
     <!--
       No broad storage permissions are declared.
-      Captures are written to app-private internal storage (context.filesDir/media)
-      and uploaded directly to the user's own Supabase Storage bucket.
+      Captures are written to app-private internal storage (files/pending/...), encrypted
+      with AES-256-GCM and uploaded to the user's own private Supabase Storage bucket.
+      Nothing is ever written to DCIM, Pictures, Movies or MediaStore.
     -->
 
     <uses-feature
@@ -52,7 +53,10 @@
             </intent-filter>
         </activity>
 
-        <!-- Exposes only files/media/* so captures can be shared through the system chooser. -->
+        <!--
+          Exposes only cache/share/* — the decrypted copy created right before a Sharesheet
+          hand-off. Pending captures and credentials stay unreachable.
+        -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

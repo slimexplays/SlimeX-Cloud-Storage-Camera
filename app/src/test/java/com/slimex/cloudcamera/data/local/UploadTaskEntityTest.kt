@@ -15,6 +15,7 @@ class UploadTaskEntityTest {
 
     private val entity = UploadTaskEntity(
         id = "task-1",
+        mediaId = "media-1",
         filePath = "/data/user/0/com.slimex.cloudcamera/files/media/photos/a.jpg",
         fileName = "a.jpg",
         kind = "photo",
@@ -38,6 +39,7 @@ class UploadTaskEntityTest {
     fun `entity maps to a domain task`() {
         val domain = entity.toDomain()
         assertEquals("task-1", domain.id)
+        assertEquals("media-1", domain.mediaId)
         assertEquals(MediaKind.PHOTO, domain.kind)
         assertEquals(UploadStatus.UPLOADING, domain.status)
         assertEquals(0.42f, domain.progress, 0.0001f)

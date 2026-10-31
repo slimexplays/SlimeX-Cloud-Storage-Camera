@@ -118,19 +118,19 @@ fun HomeScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                     StatTile(
                         label = "Photos",
-                        value = state.summary.photoCount.toString(),
+                        value = state.summary.stagedPhotoCount.toString(),
                         icon = Icons.Rounded.Image,
                         modifier = Modifier.weight(1f),
                     )
                     StatTile(
                         label = "Videos",
-                        value = state.summary.videoCount.toString(),
+                        value = state.summary.stagedVideoCount.toString(),
                         icon = Icons.Rounded.Movie,
                         modifier = Modifier.weight(1f),
                     )
                     StatTile(
                         label = "On device",
-                        value = Formatters.bytes(state.summary.totalMediaBytes),
+                        value = Formatters.bytes(state.summary.totalBytes),
                         icon = Icons.Rounded.Storage,
                         modifier = Modifier.weight(1f),
                     )

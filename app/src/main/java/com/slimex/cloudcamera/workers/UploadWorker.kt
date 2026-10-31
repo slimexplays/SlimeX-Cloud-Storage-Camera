@@ -10,20 +10,27 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 
 /**
- * Resumes pending uploads when the app is not in the foreground.
- * Real transfer work happens in the shared upload engine; this worker only restarts it.
+ * Drains the persistent upload queue.
+ *
+ * WorkManager applies the network constraint and exponential backoff; this worker only asks the
+ * repository to process whatever is runnable, then retries itself while work remains.
  */
 @HiltWorker
-class UploadRetryWorker @AssistedInject constructor(
+class UploadWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val uploadRepository: UploadRepository,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = try {
-        uploadRepository.resumePending()
-        Result.success()
+        uploadRepository.resumePending(retryFailed = true)
+        val remaining = uploadRepository.drain()
+        if (remaining > 0 && runAttemptCount < MAX_RETRIES) Result.retry() else Result.success()
     } catch (t: Throwable) {
-        Result.retry()
+        if (runAttemptCount < MAX_RETRIES) Result.retry() else Result.failure()
+    }
+
+    private companion object {
+        const val MAX_RETRIES = 6
     }
 }

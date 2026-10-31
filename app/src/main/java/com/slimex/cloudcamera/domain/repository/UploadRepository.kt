@@ -6,7 +6,10 @@ import com.slimex.cloudcamera.domain.model.UploadQueueSummary
 import com.slimex.cloudcamera.domain.model.UploadTask
 import kotlinx.coroutines.flow.StateFlow
 
-/** Persistent upload queue backed by the Supabase Storage REST API. */
+/**
+ * Persistent upload queue: captures are encrypted, transferred and verified in the background
+ * and survive reboots, process death and connectivity loss.
+ */
 interface UploadRepository {
     val tasks: StateFlow<List<UploadTask>>
     val summary: StateFlow<UploadQueueSummary>
@@ -23,6 +26,9 @@ interface UploadRepository {
     suspend fun cancel(taskId: String)
     suspend fun clearFinished()
 
-    /** Restarts every pending job — used on app start and by the retry worker. */
-    suspend fun resumePending()
+    /** Re-queues blocked jobs (and optionally exhausted retries) and schedules the worker. */
+    suspend fun resumePending(retryFailed: Boolean = false)
+
+    /** Processes everything that can run now; returns how many jobs remain queued. */
+    suspend fun drain(): Int
 }
