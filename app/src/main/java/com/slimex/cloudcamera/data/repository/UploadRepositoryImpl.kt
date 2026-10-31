@@ -134,6 +134,8 @@ class UploadRepositoryImpl @Inject constructor(
                 else -> current.copy(
                     status = UploadStatus.QUEUED,
                     progress = 0f,
+                    // A manual retry gets a fresh retry budget.
+                    attempts = 0,
                     errorMessage = null,
                     updatedAt = System.currentTimeMillis(),
                 )

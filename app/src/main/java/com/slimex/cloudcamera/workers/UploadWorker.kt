@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.ListenableWorker.Result
 import androidx.work.WorkerParameters
+import com.slimex.cloudcamera.domain.model.UploadStatus
 import com.slimex.cloudcamera.domain.repository.UploadRepository
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -25,7 +26,14 @@ class UploadWorker @AssistedInject constructor(
     override suspend fun doWork(): Result = try {
         uploadRepository.resumePending(retryFailed = true)
         val remaining = uploadRepository.drain()
-        if (remaining > 0 && runAttemptCount < MAX_RETRIES) Result.retry() else Result.success()
+        val stillWaitingForNetwork = uploadRepository.tasks.value
+            .any { it.status == UploadStatus.WAITING_FOR_NETWORK }
+        when {
+            // WorkManager keeps the network constraint, so a retry fires when a connection is back.
+            stillWaitingForNetwork && runAttemptCount < MAX_RETRIES -> Result.retry()
+            remaining > 0 && runAttemptCount < MAX_RETRIES -> Result.retry()
+            else -> Result.success()
+        }
     } catch (t: Throwable) {
         if (runAttemptCount < MAX_RETRIES) Result.retry() else Result.failure()
     }
