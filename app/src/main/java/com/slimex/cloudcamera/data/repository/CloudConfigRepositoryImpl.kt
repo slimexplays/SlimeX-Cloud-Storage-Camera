@@ -5,6 +5,7 @@ import com.slimex.cloudcamera.cloud.SupabaseValidation
 import com.slimex.cloudcamera.core.constants.AppConstants
 import com.slimex.cloudcamera.core.result.AppFailure
 import com.slimex.cloudcamera.core.result.AppResult
+import com.slimex.cloudcamera.core.result.FailureKind
 import com.slimex.cloudcamera.domain.model.CloudConfig
 import com.slimex.cloudcamera.domain.model.CloudSetupStatus
 import com.slimex.cloudcamera.domain.model.ConnectionReport
@@ -40,10 +41,10 @@ class CloudConfigRepositoryImpl @Inject constructor(
 
     override suspend fun save(projectUrl: String, publishableKey: String): AppResult<CloudConfig> {
         val validation = SupabaseValidation.validate(projectUrl, publishableKey)
-        if (validation is SupabaseValidation.Invalid) {
-            return AppResult.Failure(AppFailure(validation.message, com.slimex.cloudcamera.core.result.FailureKind.INVALID_INPUT))
+        if (validation is SupabaseValidation.Validation.Invalid) {
+            return AppResult.Failure(AppFailure(validation.message, FailureKind.INVALID_INPUT))
         }
-        val value = validation as SupabaseValidation.Valid
+        val value = validation as SupabaseValidation.Validation.Valid
         val candidate = CloudConfig(
             projectUrl = value.value.normalizedUrl,
             publishableKey = value.value.normalizedKey,
@@ -102,12 +103,12 @@ class CloudConfigRepositoryImpl @Inject constructor(
             )
         }
         val validation = SupabaseValidation.validate(url, key)
-        if (validation is SupabaseValidation.Invalid) {
+        if (validation is SupabaseValidation.Validation.Invalid) {
             return AppResult.Failure(
-                AppFailure(validation.message, com.slimex.cloudcamera.core.result.FailureKind.INVALID_INPUT),
+                AppFailure(validation.message, FailureKind.INVALID_INPUT),
             )
         }
-        val value = validation as SupabaseValidation.Valid
+        val value = validation as SupabaseValidation.Validation.Valid
         val candidate = CloudConfig(
             projectUrl = value.value.normalizedUrl,
             publishableKey = value.value.normalizedKey,

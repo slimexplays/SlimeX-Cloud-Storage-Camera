@@ -76,7 +76,7 @@ object SupabaseValidation {
         if (!value.startsWith("https://")) {
             return Validation.Invalid("Supabase projects must be reached over https.")
         }
-        return Validation.Valid(Result(projectUrl = value, publishableKey = ""))
+        return Validation.Valid(Result(normalizedUrl = value, normalizedKey = ""))
     }
 
     /** Best-effort, non-verifying peek at a JWT payload to catch service_role keys. */

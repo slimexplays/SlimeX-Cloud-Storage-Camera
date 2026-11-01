@@ -88,7 +88,7 @@ class SupabaseDataApi @Inject constructor(
         }
         val body = outcome.body ?: return@withContext AppResult.Success(emptyList())
         val rows = runCatching {
-            json.parseToJsonElement(body).jsonArray.mapNotNull { it.toCloudMedia() }
+            json.parseToJsonElement(body).jsonArray.mapNotNull { row -> (row as? JsonObject)?.toCloudMedia() }
         }.getOrElse { return@withContext AppResult.Failure(AppFailure.unknown("Could not read the gallery response.")) }
         AppResult.Success(rows)
     }
@@ -108,7 +108,8 @@ class SupabaseDataApi @Inject constructor(
         }
         val body = outcome.body ?: return@withContext AppResult.Success(null)
         val row = runCatching {
-            json.parseToJsonElement(body).jsonArray.firstOrNull()?.toCloudMedia()
+            json.parseToJsonElement(body).jsonArray.firstOrNull()
+                ?.let { row -> (row as? JsonObject)?.toCloudMedia() }
         }.getOrNull()
         AppResult.Success(row)
     }
