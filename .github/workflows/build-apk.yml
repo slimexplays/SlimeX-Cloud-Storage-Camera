@@ -9,13 +9,18 @@ name: Build APKs
 # secrets when they exist, and otherwise generates a throwaway key inside the runner so the
 # signing path itself is still built and verified:
 #
-#   RELEASE_KEYSTORE_BASE64   base64 of your .jks  (base64 -w0 slimex-release.jks)
-#   RELEASE_KEYSTORE_PASSWORD store password
-#   RELEASE_KEY_ALIAS         key alias
-#   RELEASE_KEY_PASSWORD      key password (optional, defaults to the store password)
+#   RELEASE_KEYSTORE_BASE64    base64 of your .jks  (base64 -w0 slimex-release.jks)
+#   RELEASE_KEYSTORE_PASSWORD  store password
+#   RELEASE_KEY_ALIAS          key alias
+#   RELEASE_KEY_PASSWORD       key password (optional, defaults to the store password)
 #
-# The throwaway key is fine for verifying the pipeline, but an APK signed with it cannot be
-# distributed and cannot upgrade an install signed with your real key — set the secrets for that.
+# The throwaway key proves the pipeline signs and verifies correctly, but an APK signed with it
+# cannot be distributed and cannot upgrade an install signed with your real key — set the secrets
+# for anything you actually ship.
+#
+# The Android SDK is the one preinstalled on the runner image; the failing third-party
+# "setup-android" action is deliberately not used. Failures are re-emitted as workflow annotations
+# (`::error::…`) so the reason is visible without opening the raw log.
 
 on:
   push:
@@ -28,6 +33,9 @@ on:
 concurrency:
   group: build-apk-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: '-Dorg.gradle.daemon=false'
 
 jobs:
   build:
@@ -45,13 +53,26 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK platform and build tools
+      - name: Verify Android SDK and install build tools
+        shell: bash
         run: |
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
-          yes | sdkmanager --licenses > /dev/null
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then
+            echo "::error::No Android SDK found at $SDK"
+            exit 1
+          fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          "$SDKMANAGER" --version
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          echo "build-tools present:"
+          ls "$SDK/build-tools"
 
       - name: Gradle cache
         uses: actions/cache@v4
@@ -66,10 +87,28 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Unit tests
-        run: ./gradlew --no-daemon testDebugUnitTest
+        shell: bash
+        run: |
+          set +e
+          ./gradlew --no-daemon --stacktrace testDebugUnitTest 2>&1 | tee "$RUNNER_TEMP/unit.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            ./.github/scripts/report-failure.sh "$RUNNER_TEMP/unit.log" "Unit tests failed"
+            exit "$status"
+          fi
 
       - name: Assemble debug APK
-        run: ./gradlew --no-daemon clean assembleDebug
+        shell: bash
+        run: |
+          set +e
+          ./gradlew --no-daemon --stacktrace clean assembleDebug 2>&1 | tee "$RUNNER_TEMP/debug.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            ./.github/scripts/report-failure.sh "$RUNNER_TEMP/debug.log" "assembleDebug failed"
+            exit "$status"
+          fi
 
       - name: Show APK details
         run: |
@@ -108,13 +147,26 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK platform and build tools
+      - name: Verify Android SDK and install build tools
+        shell: bash
         run: |
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
-          yes | sdkmanager --licenses > /dev/null
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then
+            echo "::error::No Android SDK found at $SDK"
+            exit 1
+          fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          "$SDKMANAGER" --version
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          echo "build-tools present:"
+          ls "$SDK/build-tools"
 
       - name: Gradle cache
         uses: actions/cache@v4
@@ -130,7 +182,7 @@ jobs:
 
       # ---------------------------------------------------------------------------------------
       # Signing material: repository secrets when configured, an ephemeral CI key otherwise.
-      # Nothing is written into the workspace, and no secret is echoed.
+      # It is written to $RUNNER_TEMP — never into the workspace — and no password is echoed.
       # ---------------------------------------------------------------------------------------
       - name: Prepare signing material
         id: signing
@@ -167,11 +219,10 @@ jobs:
           fi
 
           chmod 600 "$KEYSTORE_PATH"
-
           # Fail loudly if the keystore cannot be opened with the supplied password.
           keytool -list -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" -alias "$ALIAS" > /dev/null
-          echo "Keystore source: $SOURCE"
 
+          echo "::notice::Release signing material: $SOURCE"
           {
             echo "keystore=$KEYSTORE_PATH"
             echo "store_password=$STORE_PASSWORD"
@@ -184,34 +235,47 @@ jobs:
       # The two builds that must both end up signed.
       # ---------------------------------------------------------------------------------------
       - name: Build signed release APK and AAB
-        # Passwords are handed to Gradle through the environment, never interpolated into the
-        # step script, so they cannot end up in the job log.
+        # Passwords reach Gradle through the environment, never interpolated into the step script.
         env:
           SIGNING_STORE_FILE: ${{ steps.signing.outputs.keystore }}
           SIGNING_STORE_PASSWORD: ${{ steps.signing.outputs.store_password }}
           SIGNING_KEY_ALIAS: ${{ steps.signing.outputs.key_alias }}
           SIGNING_KEY_PASSWORD: ${{ steps.signing.outputs.key_password }}
+        shell: bash
         run: |
           set -euo pipefail
           : "${SIGNING_STORE_FILE:?}" "${SIGNING_STORE_PASSWORD:?}" "${SIGNING_KEY_ALIAS:?}" "${SIGNING_KEY_PASSWORD:?}"
-          ./gradlew --no-daemon assembleRelease bundleRelease \
+
+          set +e
+          ./gradlew --no-daemon --stacktrace assembleRelease bundleRelease \
             -Pandroid.injected.signing.store.file="$SIGNING_STORE_FILE" \
             -Pandroid.injected.signing.store.password="$SIGNING_STORE_PASSWORD" \
             -Pandroid.injected.signing.key.alias="$SIGNING_KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$SIGNING_KEY_PASSWORD"
+            -Pandroid.injected.signing.key.password="$SIGNING_KEY_PASSWORD" \
+            2>&1 | tee "$RUNNER_TEMP/release.log"
+          status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$status" -ne 0 ]; then
+            ./.github/scripts/report-failure.sh "$RUNNER_TEMP/release.log" "assembleRelease/bundleRelease failed"
+            exit "$status"
+          fi
 
       # ---------------------------------------------------------------------------------------
-      # Verification. This step fails the job if either artifact is unsigned or signed by a
-      # different key than the one injected above.
+      # Verification. Fails the job if either artifact is unsigned, or if the APK was signed by a
+      # different certificate than the keystore injected above.
       # ---------------------------------------------------------------------------------------
       - name: Verify APK signature (apksigner) and AAB signature (jarsigner)
         env:
           KEYSTORE: ${{ steps.signing.outputs.keystore }}
           STORE_PASSWORD: ${{ steps.signing.outputs.store_password }}
           KEY_ALIAS: ${{ steps.signing.outputs.key_alias }}
+          KEYSTORE_SOURCE: ${{ steps.signing.outputs.source }}
+        shell: bash
         run: |
           set -euo pipefail
-          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          BUILD_TOOLS="$SDK/build-tools/35.0.0"
           APK="app/build/outputs/apk/release/app-release.apk"
           AAB="app/build/outputs/bundle/release/app-release.aab"
           mkdir -p build-verification
@@ -234,21 +298,29 @@ jobs:
 
           echo
           echo "── apksigner verify (APK) ──"
-          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" \
-            | tee build-verification/apk-signature.txt
+          if ! "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" \
+              | tee build-verification/apk-signature.txt; then
+            echo "::error::apksigner could not verify $APK"
+            exit 1
+          fi
 
           echo
           echo "── zipalign check (APK) ──"
-          "$BUILD_TOOLS/zipalign" -c -v 4 "$APK" > /dev/null && echo "4-byte aligned: OK"
+          if "$BUILD_TOOLS/zipalign" -c -v 4 "$APK" > /dev/null; then
+            echo "4-byte aligned: OK"
+          else
+            echo "::error::$APK is not zip-aligned"
+            exit 1
+          fi
 
           echo
           echo "── jarsigner -verify (AAB) ──"
           jarsigner -verify -verbose -certs "$AAB" > build-verification/aab-signature.txt 2>&1 || true
           jarsigner -verify "$AAB" | tee -a build-verification/aab-signature.txt
-          grep -q "jar verified" build-verification/aab-signature.txt || {
-            echo "::error::jarsigner did not verify the AAB"
+          if ! grep -q "jar verified" build-verification/aab-signature.txt; then
+            echo "::error::jarsigner did not verify $AAB"
             exit 1
-          }
+          fi
 
           echo
           echo "── the signature comes from the injected keystore ──"
@@ -256,26 +328,25 @@ jobs:
             | sed -n 's/.*SHA256: //p' | head -n1 | tr -d ':' | tr 'A-F' 'a-f')"
           APK_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' build-verification/apk-signature.txt \
             | head -n1 | tr -d ':' | tr 'A-F' 'a-f')"
-          AAB_HAS="$(grep -ci "$(echo "$EXPECTED" | sed 's/../&:/g; s/:$//' | tr 'a-f' 'A-F')" build-verification/aab-signature.txt || true)"
 
           echo "keystore SHA-256 : $EXPECTED"
           echo "APK signer       : $APK_SHA"
-          echo "AAB mentions key : $AAB_HAS"
 
           if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$APK_SHA" ]; then
             echo "::error::The APK is signed by a different certificate than the injected keystore."
             exit 1
           fi
-          if [ "$AAB_HAS" -eq 0 ]; then
-            echo "::warning::jarsigner verified the AAB but did not print the expected fingerprint; inspect the uploaded log."
-          fi
+
+          echo "::notice::APK signature verified by apksigner (v2/v3), signer SHA-256 $APK_SHA"
+          echo "::notice::AAB signature verified by jarsigner (jar verified)"
+          echo "::notice::Release signing material: $KEYSTORE_SOURCE"
 
           {
             echo "### Release signing verification"
             echo
-            echo "- Keystore source: ${{ steps.signing.outputs.source }}"
-            echo "- APK signer certificate SHA-256: \`$APK_SHA\`"
-            echo "- apksigner: verified | jarsigner (AAB): jar verified"
+            echo "- Keystore source: $KEYSTORE_SOURCE"
+            echo "- APK signer certificate SHA-256: \`$APK_SHA\` (matches the injected keystore)"
+            echo "- apksigner: verified · jarsigner (AAB): jar verified · zipalign: OK"
             echo
             echo '```'
             head -n 12 build-verification/apk-signature.txt
