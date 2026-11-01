@@ -8,7 +8,9 @@ import com.slimex.cloudcamera.core.constants.AppConstants
 import com.slimex.cloudcamera.core.network.AndroidConnectivityObserver
 import com.slimex.cloudcamera.core.network.ConnectivityObserver
 import com.slimex.cloudcamera.core.util.DefaultDispatchersProvider
+import com.slimex.cloudcamera.cloud.r2.WorkerMediaStorage
 import com.slimex.cloudcamera.core.util.DispatchersProvider
+import com.slimex.cloudcamera.domain.repository.MediaStorageGateway
 import com.slimex.cloudcamera.security.AesGcmMediaCrypto
 import com.slimex.cloudcamera.security.EncryptedMediaKeyStore
 import com.slimex.cloudcamera.security.EncryptedSecureStore
@@ -95,4 +97,8 @@ abstract class BindingsModule {
     @Binds
     @Singleton
     abstract fun bindRecoveryManager(impl: PassphraseRecoveryManager): RecoveryManager
+
+    @Binds
+    @Singleton
+    abstract fun bindMediaStorageGateway(impl: WorkerMediaStorage): MediaStorageGateway
 }

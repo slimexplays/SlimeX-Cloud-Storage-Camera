@@ -47,7 +47,6 @@ class CloudConfigRepositoryImpl @Inject constructor(
         val candidate = CloudConfig(
             projectUrl = value.value.normalizedUrl,
             publishableKey = value.value.normalizedKey,
-            bucket = readBucket(),
             table = readTable(),
             savedAt = System.currentTimeMillis(),
         )
@@ -112,7 +111,6 @@ class CloudConfigRepositoryImpl @Inject constructor(
         val candidate = CloudConfig(
             projectUrl = value.value.normalizedUrl,
             publishableKey = value.value.normalizedKey,
-            bucket = readBucket(),
             table = readTable(),
         )
         return tester.test(candidate, onStep)
@@ -123,7 +121,6 @@ class CloudConfigRepositoryImpl @Inject constructor(
     private fun persist(config: CloudConfig) {
         secureStore.putString(KEY_URL, config.projectUrl)
         secureStore.putString(KEY_API, config.publishableKey)
-        secureStore.putString(KEY_BUCKET, config.bucket)
         secureStore.putString(KEY_TABLE, config.table)
         secureStore.putString(KEY_SAVED_AT, config.savedAt.toString())
     }
@@ -134,22 +131,18 @@ class CloudConfigRepositoryImpl @Inject constructor(
         return CloudConfig(
             projectUrl = url,
             publishableKey = key,
-            bucket = readBucket(),
             table = readTable(),
             savedAt = secureStore.getString(KEY_SAVED_AT)?.toLongOrNull() ?: 0L,
         )
     }
 
-    // Part 2 always uses the private bucket and media_files table. Values stored by an older
-    // build are ignored on purpose so an upgraded install never talks to a public bucket.
-    private fun readBucket(): String = AppConstants.DEFAULT_BUCKET
-
+    // The table name is fixed: media metadata always lives in `media_files`. A value stored by an
+    // older build is ignored on purpose so an upgraded install never writes somewhere unexpected.
     private fun readTable(): String = AppConstants.MEDIA_TABLE
 
     private companion object {
         const val KEY_URL = "cloud_project_url"
         const val KEY_API = "cloud_publishable_key"
-        const val KEY_BUCKET = "cloud_bucket"
         const val KEY_TABLE = "cloud_table"
         const val KEY_SAVED_AT = "cloud_saved_at"
     }

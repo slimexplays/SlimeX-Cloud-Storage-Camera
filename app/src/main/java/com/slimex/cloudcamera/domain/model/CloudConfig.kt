@@ -12,7 +12,6 @@ import com.slimex.cloudcamera.core.constants.AppConstants
 data class CloudConfig(
     val projectUrl: String,
     val publishableKey: String,
-    val bucket: String = AppConstants.DEFAULT_BUCKET,
     val table: String = AppConstants.MEDIA_TABLE,
     val savedAt: Long = System.currentTimeMillis(),
 ) {

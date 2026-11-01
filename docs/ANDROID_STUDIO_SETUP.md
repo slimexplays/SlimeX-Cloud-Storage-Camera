@@ -148,13 +148,22 @@ Hilt, CameraX and WorkManager keep rules are already there).
 
 Nothing is baked into the APK. After install:
 
-1. **Settings → Supabase configuration** → project URL + publishable (anon) key →
+1. **Settings → Cloud configuration → Supabase** → project URL + publishable (anon) key →
    **Test connection** → **Save**.
-2. **Account** → create an account / sign in.
-3. **Settings → Encryption & Recovery** → create a recovery code **before** you accumulate
+2. **Settings → Cloud configuration → Cloudflare R2** → the URL of the Worker you deployed
+   (`https://slimex-media.<you>.workers.dev`) → **Test connection** → **Save**.
+   Nothing else goes in this field: the R2 account id, keys and bucket name live in the Worker.
+3. **Account** → create an account / sign in.
+4. **Settings → Encryption & Recovery** → create a recovery code **before** you accumulate
    media you care about, and store it off-device.
 
-See [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md) for the server side.
+Server side: [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md) and
+[`CLOUDFLARE_R2_WORKER_SETUP.md`](CLOUDFLARE_R2_WORKER_SETUP.md).
+
+> **What the app stores on the device:** the Supabase project URL, the publishable key and the
+> Worker URL — all in Keystore-backed encrypted preferences. It stores **no** R2 credential, no
+> service_role key and no signed URL. Media keys never leave the device except inside the sealed
+> recovery envelope you choose to export.
 
 ---
 
@@ -171,7 +180,8 @@ SlimeX-Cloud-Storage-Camera/
 │       ├── main/AndroidManifest.xml
 │       └── test/java/com/slimex/cloudcamera/     JVM unit tests
 ├── gradle/libs.versions.toml      every dependency version in one place
-├── supabase/                      schema.sql, storage.sql, setup notes
+├── supabase/                      schema.sql (metadata only), setup notes
+├── worker/                        Cloudflare Worker: src/, test/, wrangler.toml
 ├── docs/                          setup, testing, limitations, build report
 └── README.md
 ```
@@ -186,7 +196,10 @@ SlimeX-Cloud-Storage-Camera/
 | "Secure key storage is unavailable" on the Encryption screen | The device ROM has a broken Android Keystore. The app fails closed (uploads blocked) instead of storing keys insecurely. Try a device with a working Keystore. |
 | Uploads stay in `WAITING_FOR_CONFIG` | Supabase URL/key not saved. |
 | Uploads stay in `WAITING_FOR_AUTH` | Session expired and refresh failed → open **Account** and sign in again. |
-| `401` on upload | RLS/storage policies not created → re-run `supabase/storage.sql`. |
-| `404 bucket not found` | Bucket name differs; the app requires `slimex-private-media`. |
+| `401` on upload | Session expired and refresh failed → open **Account**, sign in again. |
+| `WAITING_FOR_CONFIG` after configuring Supabase | The Cloudflare R2 card has no Worker endpoint saved → add it (Settings → Cloud configuration). |
+| "The Worker did not answer, so nothing was saved." | Worker URL wrong or not deployed → `curl https://<worker>/health`; enter only the Worker origin, not `/health`. |
+| `403 forbidden` from the Worker | The object key does not start with your Supabase user id — usually rows created against another project. |
+| Previews/downloads fail with `object_not_found` | The object was deleted from the bucket, or the upload never finished. Pending captures stay on the device. |
 | Gallery tiles show a lock/placeholder | The file was uploaded from another device and its key is not in this key ring → restore the recovery code that device exported. |
 | Build error about `kapt` and Kotlin 2.0 | Use the versions in `gradle/libs.versions.toml`; don't bump Kotlin alone. |

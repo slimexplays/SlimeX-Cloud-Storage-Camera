@@ -10,7 +10,11 @@ produce.
 
 | Item | Status |
 | --- | --- |
-| Source code complete for Parts 1 + 2 + 3 in one module | ✅ verified by review |
+| Source code complete for Parts 1 + 2 + 3 + 4 in one module | ✅ verified by review |
+| Cloudflare Worker source (no dependencies) | ✅ `node --check` on every file |
+| Worker route behaviour | ✅ 10 offline tests with mocked Supabase + R2 (`cd worker && npm test`) |
+| Worker SigV4 correctness | ✅ 2 parity tests — signatures byte-identical to `aws4fetch` 1.0.20 |
+| Worker deployed to Cloudflare / live R2 | ❌ **not executed** — no Cloudflare account in the authoring sandbox |
 | Gradle wrapper, version catalog, manifest, resources parse | ✅ verified (XML/TOML parsed, wrapper matches Gradle 8.9) |
 | Kotlin structure audit (balanced braces/imports, no duplicate imports, no stray non-ASCII) | ✅ verified by script |
 | `./gradlew clean assembleDebug` executed | ❌ **not executed** — the authoring sandbox has no JDK, no Android SDK and no access to Google's/Maven's repositories |
@@ -151,3 +155,50 @@ as an artifact.
 - [ ] `docs/TESTING_CHECKLIST.md` scenarios 1–20 executed once.
 - [ ] `sql` scripts run clean on a fresh Supabase project; `media_files` has **no key columns**.
 - [ ] Release build (`assembleRelease`) completes with R8 and installs.
+
+---
+
+## 7. Part 4 verification (Supabase + Cloudflare R2)
+
+### What was run here
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Worker syntax | `for f in worker/src/*.js; do node --check "$f"; done` | ✅ all files parse (Node 22) |
+| Worker routes (mocked Supabase + R2) | `cd worker && npm test` | ✅ 11/11 |
+| Presigned PUT parity | same suite | ✅ signature identical to `aws4fetch` 1.0.20 |
+| Header-signed S3 request parity | same suite | ✅ signature identical to `aws4fetch` 1.0.20 |
+| Kotlin: no reference to a removed API | `grep -rn "SupabaseStorageApi\|probeBucket\|DEFAULT_BUCKET" app/src` | ✅ no matches |
+| Kotlin: R2 credentials never referenced in app code | grep for `R2_SECRET`, `R2_ACCESS_KEY`, `r2.cloudflarestorage.com`, `service_role` | ✅ no matches (only the Worker URL is stored) |
+| Docs: no stale `storage.sql` references | `grep -rn "storage.sql"` | ✅ none |
+
+### What was **not** run here (and cannot be)
+
+- `./gradlew assembleDebug` — no JDK / Android SDK / Maven access in this environment, so the new
+  Part 4 Kotlin files are **statically reviewed, not compiled**. The first real Gradle run is where
+  a typo would surface; nothing here should be read as "it compiles".
+- `wrangler deploy` and any request to a real R2 bucket — no Cloudflare account or credentials are
+  available here. The Worker was exercised offline with a stubbed network only.
+- Any on-device test on the Realme C31 (that requires an APK, which requires the SDK).
+
+### Exact commands to close the gap
+
+```bash
+# 1. Android build (needs JDK 17 + Android SDK 35)
+./gradlew :app:assembleDebug          # expect app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:testDebugUnitTest
+
+# 2. Worker tests (needs Node 18+)
+cd worker && npm install && npm test  # expect 13 passing
+
+# 3. Worker deploy (needs a Cloudflare account)
+npx wrangler login
+npx wrangler secret put R2_ACCOUNT_ID   # …and the other five secrets
+npx wrangler deploy
+curl -s https://<your-worker>.workers.dev/health | jq
+```
+
+If step 1 fails, the failure will be a compile error in the Part 4 additions rather than a design
+problem: those files (`cloud/r2/*`, `ui/screens/settings/CloudConfiguration*`,
+`data/repository/R2ConfigRepositoryImpl.kt`, `di/` bindings) are the only ones whose signatures
+could not be checked by a compiler here.

@@ -7,7 +7,8 @@ Every scenario below is reproducible by hand. "Expected" describes observable be
 implementation detail — if a step fails, the app must show a message and keep your media safe.
 
 Setup for the whole list: finish [`ANDROID_STUDIO_SETUP.md`](ANDROID_STUDIO_SETUP.md), run
-`supabase/schema.sql` + `supabase/storage.sql`, and have the project URL + publishable key ready.
+`supabase/schema.sql`, deploy the Worker from [`CLOUDFLARE_R2_WORKER_SETUP.md`](CLOUDFLARE_R2_WORKER_SETUP.md),
+and have the Supabase project URL + publishable key plus the Worker URL ready.
 
 ---
 
@@ -30,18 +31,31 @@ from Settings.
 
 ## 3. Supabase configuration
 
-1. **Settings → Supabase configuration** → paste URL + publishable key.
+1. **Settings → Cloud configuration → Supabase** → paste URL + publishable key.
 
 **Expected:** validation errors appear for a malformed URL; a `service_role`/`sb_secret_` key is
 rejected with an explicit message. Saving shows "Saved"; the values survive an app restart.
 
+## 3b. Cloudflare R2 configuration
+
+1. **Settings → Cloud configuration → Cloudflare R2** → paste the Worker URL
+   (`https://slimex-media.<you>.workers.dev`), keep the provider name "Cloudflare R2".
+2. Tap **Test connection**.
+
+**Expected:** four steps — *Worker endpoint reachable* (required), *Supabase session accepted*
+(skipped until you sign in), *Cloudflare R2 reachable* (required), *Storage access verified*.
+A Supabase project URL pasted by mistake is refused with "This is the Supabase project URL…".
+Saving an endpoint the Worker does not answer is refused: nothing is persisted.
+**There is no field for an R2 account id, access key, secret key or bucket name — and there must
+not be one.** The card explains that those live in the Worker.
+
 ## 4. Connection validation
 
-1. Tap **Test connection**.
+1. Tap **Test connection** on the Supabase card (then on the R2 card).
 
-**Expected:** per-check results (reachability, auth health, bucket, table). Wrong key → 401 shown
-as "key rejected"; wrong bucket → "bucket not found"; airplane mode → "no connection". Nothing is
-saved until you press Save.
+**Expected:** per-check results with a pill per step. Wrong key → 401 shown as "key rejected";
+airplane mode → "no connection"; Worker down → "The Worker did not answer…". Nothing is saved
+until you press Save.
 
 ## 5. Login and logout
 
@@ -178,16 +192,41 @@ forever, no raw JSON or stack trace is shown.
 
 ---
 
+## Part 4 — end-to-end cloud list
+
+Each item is one manual test. "Verified usage" means the number came from R2 through the Worker;
+"recorded" means it came from `media_files` in Supabase. The app must always label which is which.
+
+| # | Test | Steps | Expected |
+| --- | --- | --- | --- |
+| P4-1 | Supabase connection | Save URL + publishable key, Test connection | all required steps pass; host shown; survives restart |
+| P4-2 | Worker auth | Sign in, R2 card → Test connection | "Supabase session accepted" passes; signed out → skipped with a hint |
+| P4-3 | R2 connection | `/health` via the card (or `curl`) | "Cloudflare R2 reachable" passes; break the bucket name in the Worker → step fails with a clear message |
+| P4-4 | Photo upload | Capture a photo with Wi-Fi on | queue: encrypting → uploading → verifying → uploaded; row in `media_files`; object in R2 with `.enc` suffix |
+| P4-5 | Video upload | Record ~15 s, wait for upload | progress advances monotonically; object size equals the ciphertext size; no plaintext in R2 |
+| P4-6 | Encrypted download | Gallery → View a photo uploaded from another install of the app (same account, recovery code restored) | file decrypts from app-private cache; nothing is written to Pictures/DCIM |
+| P4-7 | Gallery sync | Pull to refresh the cloud gallery | rows come from Supabase; thumbnails load through the Worker; no public URLs |
+| P4-8 | WhatsApp share | Tap Share on a cloud item → WhatsApp | Sharesheet opens with a `content://…/cache/share/…` URI; WhatsApp receives a playable file; the shared copy is cleaned later, not immediately |
+| P4-9 | Upload retry | Enable airplane mode mid-upload, then disable | task keeps its encrypted temp file, retries with WorkManager, resumes without re-capturing |
+| P4-10 | Delete | Delete a cloud item | object gone from R2 (`object_not_found` afterwards), row gone from Supabase, local cache cleaned, pending uploads untouched |
+| P4-11 | Invalid credentials | Rotate `SUPABASE_ANON_KEY` in the Worker only | Worker returns 401 → app says "session expired", queue parks in `WAITING_FOR_AUTH`, nothing deleted |
+| P4-12 | Network loss | Turn off Wi-Fi/data for 2 minutes | status card shows "Unreachable"; uploads pause; no crash, no data loss |
+| P4-13 | Unauthorized access | `curl` the Worker without a token, with a forged token, and with another user's key | 401 / 401 / 403 — never a signed URL, never another user's bytes |
+| P4-14 | No fabricated quota | Open Settings → Cloud configuration → status card | "Free quota: Not reported by provider"; verified usage shown only when the Worker answered |
+
 ## Additional security checks
 
 | # | Check | Expected |
 | --- | --- | --- |
 | S1 | `adb shell run-as com.slimex.cloudcamera ls files/keys` | `keyring.v1` exists and is not plaintext JSON |
-| S2 | Download an object from the Supabase dashboard | It is ciphertext (not a JPEG/MP4) |
+| S2 | Download an object from the Cloudflare R2 dashboard | It is ciphertext (not a JPEG/MP4) |
+| S2b | `adb shell run-as com.slimex.cloudcamera cat shared_prefs/*.xml` | No R2 access key, secret key, account id or bucket name anywhere |
+| S2c | grep the APK (`unzip -l`, `strings app-debug.apk`) for `r2.cloudflarestorage.com`, `R2_SECRET`, `service_role` | No matches — the app only knows the Worker URL |
 | S3 | `select * from media_files limit 1` | No key/nonce columns exist |
 | S4 | `adb logcat | grep -i -E "password|apikey|bearer|eyJ"` while using the app (debug build) | No secrets printed; release builds print nothing at all |
 | S5 | Try to open `content://com.slimex.cloudcamera.fileprovider/files/pending/...` from another app | Denied — only `cache/share` is exposed |
-| S6 | Sign in as a second account | First account's rows and objects are invisible |
+| S6 | Sign in as a second account | First account's rows and objects are invisible; the Worker answers `403 forbidden` for the first user's keys |
+| S6b | `curl -X GET "<worker>/v1/usage" -H "authorization: Bearer <token of user B>"` | Only user B's objects are counted |
 | S7 | Android Settings → Apps → SlimeX → Storage | No media in shared storage; app data only |
 | S8 | Toggle the "Reset keys" action after exporting a code | Media becomes unreadable until the code is restored |
 

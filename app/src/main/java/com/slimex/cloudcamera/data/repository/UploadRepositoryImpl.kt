@@ -265,7 +265,7 @@ class UploadRepositoryImpl @Inject constructor(
         }
 
         setStatus(taskId, UploadStatus.UPLOADING, "Uploading encrypted file…")
-        val transfer = uploader.transfer(context, prepared) { progress ->
+        val transfer = uploader.transfer(prepared) { progress ->
             updateProgress(taskId, progress)
         }
         if (transfer is AppResult.Failure) {
@@ -279,7 +279,7 @@ class UploadRepositoryImpl @Inject constructor(
         }
 
         setStatus(taskId, UploadStatus.VERIFYING, "Verifying the cloud copy…")
-        val verification = uploader.verify(context, prepared)
+        val verification = uploader.verify(prepared)
         if (verification is AppResult.Failure) {
             handleFailure(taskId, verification.error, context)
             return true

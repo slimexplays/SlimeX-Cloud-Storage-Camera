@@ -138,8 +138,8 @@ fun CloudGalleryScreen(
                     icon = Icons.Rounded.CloudOff,
                     title = "No cloud project yet",
                     message = "Connect your Supabase project to see the photos and videos stored in " +
-                        "your private bucket.",
-                    actionLabel = "Open cloud setup",
+                        "your private bucket — configure Supabase and the Cloudflare Worker first.",
+                    actionLabel = "Cloud settings",
                     onAction = onOpenCloudSetup,
                     modifier = Modifier.padding(top = 40.dp),
                 )

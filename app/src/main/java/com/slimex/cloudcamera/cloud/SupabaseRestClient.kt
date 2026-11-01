@@ -16,8 +16,9 @@ import javax.inject.Singleton
 /**
  * Diagnostics-only client used by the setup screen and the connection tester.
  *
- * Real data access lives in [SupabaseAuthApi], [SupabaseStorageApi] and [SupabaseDataApi],
- * which always send the signed-in user's access token. This class only probes endpoints with
+ * Real data access lives in [SupabaseAuthApi] and [SupabaseDataApi], which always send the
+ * signed-in user's access token. Media bytes never pass through Supabase: they live in a private
+ * Cloudflare R2 bucket reached through the user's Worker (see `cloud/r2`). This class only probes endpoints with
  * the publishable key, so it can never read or write a user's media.
  */
 @Singleton
@@ -37,20 +38,6 @@ class SupabaseRestClient @Inject constructor(
             Request.Builder()
                 .url(url)
                 .get()
-                .publicKey(config)
-                .header("Accept", "application/json")
-                .build(),
-        )
-    }
-
-    suspend fun probeBucket(config: CloudConfig): HttpOutcome {
-        val url = build(config, "storage", "v1", "object", "list", config.bucket)
-            ?: return invalidUrl()
-        val payload = """{"prefix":"","limit":1,"offset":0,"sortBy":{"column":"name","order":"asc"}}"""
-        return execute(
-            Request.Builder()
-                .url(url)
-                .post(payload.toRequestBody(JSON_MEDIA_TYPE))
                 .publicKey(config)
                 .header("Accept", "application/json")
                 .build(),

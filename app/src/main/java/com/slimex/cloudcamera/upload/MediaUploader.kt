@@ -3,7 +3,7 @@ package com.slimex.cloudcamera.upload
 import com.slimex.cloudcamera.cloud.CloudContext
 import com.slimex.cloudcamera.cloud.MediaRowInput
 import com.slimex.cloudcamera.cloud.SupabaseDataApi
-import com.slimex.cloudcamera.cloud.SupabaseStorageApi
+import com.slimex.cloudcamera.domain.repository.MediaStorageGateway
 import com.slimex.cloudcamera.core.result.AppFailure
 import com.slimex.cloudcamera.core.result.AppResult
 import com.slimex.cloudcamera.core.util.StoragePaths
@@ -51,7 +51,7 @@ data class PreparedUpload(
 @Singleton
 class MediaUploader @Inject constructor(
     private val crypto: MediaCrypto,
-    private val storage: SupabaseStorageApi,
+    private val storage: MediaStorageGateway,
     private val data: SupabaseDataApi,
     private val staging: StagingStore,
     private val thumbnails: ThumbnailFactory,
@@ -114,15 +114,18 @@ class MediaUploader @Inject constructor(
         )
     }
 
+    /**
+     * Streams the ciphertext (and the encrypted preview, when there is one) to the media backend.
+     *
+     * The gateway asks the Worker for a short-lived upload authorization per object; the app never
+     * holds an R2 credential and never talks to a bucket URL it did not just receive.
+     */
     suspend fun transfer(
-        context: CloudContext,
         prepared: PreparedUpload,
         onProgress: (Float) -> Unit,
     ): AppResult<Unit> {
         val main = storage.upload(
-            config = context.config,
-            accessToken = context.accessToken,
-            objectPath = prepared.objectKey,
+            objectKey = prepared.objectKey,
             file = prepared.encryptedFile,
             contentType = OCTET_STREAM,
             onProgress = { fraction -> onProgress(fraction * 0.9f) },
@@ -133,9 +136,7 @@ class MediaUploader @Inject constructor(
         val thumbKey = prepared.thumbnailObjectKey
         if (thumbFile != null && thumbKey != null) {
             val thumb = storage.upload(
-                config = context.config,
-                accessToken = context.accessToken,
-                objectPath = thumbKey,
+                objectKey = thumbKey,
                 file = thumbFile,
                 contentType = OCTET_STREAM,
                 onProgress = { fraction -> onProgress(0.9f + fraction * 0.1f) },
@@ -151,22 +152,15 @@ class MediaUploader @Inject constructor(
      * Confirms the bucket really holds the file: the object must exist with the expected size and,
      * for anything up to [VERIFY_DOWNLOAD_LIMIT], the ciphertext is fetched back and hashed.
      */
-    suspend fun verify(context: CloudContext, prepared: PreparedUpload): AppResult<Unit> {
-        val prefix = prepared.objectKey.substringBeforeLast('/', "")
-        val search = prepared.objectKey.substringAfterLast('/').removeSuffix(".enc").take(24)
-
-        val listing = when (
-            val result = storage.list(context.config, context.accessToken, prefix = prefix, search = search)
-        ) {
+    suspend fun verify(prepared: PreparedUpload): AppResult<Unit> {
+        val remote = when (val result = storage.stat(prepared.objectKey)) {
             is AppResult.Success -> result.data
-            is AppResult.Failure -> return result
-        }
-
-        val expectedName = prepared.objectKey.substringAfterLast('/')
-        val remote = listing.firstOrNull { it.name == expectedName }
-            ?: return AppResult.Failure(
-                AppFailure.unknown("The upload finished but the file is not in the bucket yet. Retrying."),
+            is AppResult.Failure -> return AppResult.Failure(
+                AppFailure.unknown(
+                    "The upload finished but the object is not readable yet (${result.error.message}). Retrying.",
+                ),
             )
+        }
 
         if (remote.sizeBytes > 0L && remote.sizeBytes != prepared.encryptedSize) {
             return AppResult.Failure(
@@ -179,14 +173,7 @@ class MediaUploader @Inject constructor(
         if (prepared.encryptedSize <= VERIFY_DOWNLOAD_LIMIT) {
             val scratch = staging.scratchFile("verify")
             try {
-                val downloaded = when (
-                    val result = storage.download(
-                        context.config,
-                        context.accessToken,
-                        prepared.objectKey,
-                        scratch,
-                    )
-                ) {
+                val downloaded = when (val result = storage.download(prepared.objectKey, scratch)) {
                     is AppResult.Success -> result.data
                     is AppResult.Failure -> return result
                 }
@@ -203,9 +190,12 @@ class MediaUploader @Inject constructor(
 
         val thumbKey = prepared.thumbnailObjectKey
         if (thumbKey != null) {
-            val thumbName = thumbKey.substringAfterLast('/')
-            val thumbRemote = listing.firstOrNull { it.name == thumbName }
-                ?: return AppResult.Failure(AppFailure.unknown("The preview image was not stored. Retrying."))
+            val thumbRemote = when (val result = storage.stat(thumbKey)) {
+                is AppResult.Success -> result.data
+                is AppResult.Failure -> return AppResult.Failure(
+                    AppFailure.unknown("The preview image was not stored yet. Retrying."),
+                )
+            }
             // The bucket holds the ciphertext, so compare against the encrypted file's length.
             val expectedThumb = prepared.thumbnailFile?.length() ?: 0L
             if (thumbRemote.sizeBytes > 0L && expectedThumb > 0L && thumbRemote.sizeBytes != expectedThumb) {
@@ -216,13 +206,6 @@ class MediaUploader @Inject constructor(
         return AppResult.Success(Unit)
     }
 
-    /**
-     * Persists the key ring entry **first** and only then inserts the metadata row.
-     *
-     * The order matters: a row without its local key could never be decrypted again, while an
-     * orphaned key entry is harmless (the next attempt for the same media id overwrites it).
-     * No key or nonce is ever written to Supabase — only the bucket path, sizes and checksums.
-     */
     suspend fun saveMetadata(context: CloudContext, prepared: PreparedUpload, task: UploadTask): AppResult<Unit> {
         val entry = MediaKeyEntry(
             k = prepared.encryptionKey.keyBase64,

@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.slimex.cloudcamera.domain.model.AuthStatus
 import com.slimex.cloudcamera.domain.model.CloudSetupStatus
+import com.slimex.cloudcamera.domain.model.R2SetupStatus
 import com.slimex.cloudcamera.domain.model.LocalMedia
 import com.slimex.cloudcamera.domain.model.LocalStorageSummary
 import com.slimex.cloudcamera.domain.model.UploadQueueSummary
 import com.slimex.cloudcamera.domain.repository.AuthRepository
+import com.slimex.cloudcamera.domain.repository.R2ConfigRepository
 import com.slimex.cloudcamera.domain.repository.CloudConfigRepository
 import com.slimex.cloudcamera.domain.repository.LocalMediaRepository
 import com.slimex.cloudcamera.domain.repository.UploadRepository
@@ -23,6 +25,7 @@ import javax.inject.Inject
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val cloudConfigRepository: CloudConfigRepository,
+    private val r2ConfigRepository: R2ConfigRepository,
     private val localMediaRepository: LocalMediaRepository,
     private val uploadRepository: UploadRepository,
     private val authRepository: AuthRepository,
@@ -31,12 +34,14 @@ class HomeViewModel @Inject constructor(
     data class State(
         val loading: Boolean = true,
         val cloudStatus: CloudSetupStatus = CloudSetupStatus.Loading,
+        val mediaStatus: R2SetupStatus = R2SetupStatus.Loading,
         val signedInEmail: String? = null,
         val recent: List<LocalMedia> = emptyList(),
         val queue: UploadQueueSummary = UploadQueueSummary(),
         val summary: LocalStorageSummary = LocalStorageSummary(),
     ) {
         val cloudConfigured: Boolean get() = cloudStatus is CloudSetupStatus.Configured
+        val mediaConfigured: Boolean get() = mediaStatus is R2SetupStatus.Configured
     }
 
     private val _state = MutableStateFlow(State())
@@ -59,6 +64,11 @@ class HomeViewModel @Inject constructor(
                         )
                     }
                 }
+        }
+        viewModelScope.launch {
+            r2ConfigRepository.status.collect { status ->
+                _state.update { it.copy(mediaStatus = status) }
+            }
         }
         viewModelScope.launch {
             authRepository.status.collect { status ->

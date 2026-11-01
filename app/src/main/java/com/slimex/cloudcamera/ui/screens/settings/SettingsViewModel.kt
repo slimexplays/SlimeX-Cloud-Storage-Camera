@@ -5,8 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.slimex.cloudcamera.domain.model.AppSettings
 import com.slimex.cloudcamera.domain.model.AuthStatus
 import com.slimex.cloudcamera.domain.model.CloudSetupStatus
+import com.slimex.cloudcamera.domain.model.R2SetupStatus
 import com.slimex.cloudcamera.domain.repository.AuthRepository
 import com.slimex.cloudcamera.domain.repository.CloudConfigRepository
+import com.slimex.cloudcamera.domain.repository.R2ConfigRepository
 import com.slimex.cloudcamera.domain.repository.SettingsRepository
 import com.slimex.cloudcamera.security.SecureStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -21,6 +23,7 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val cloudConfigRepository: CloudConfigRepository,
+    private val r2ConfigRepository: R2ConfigRepository,
     private val authRepository: AuthRepository,
     secureStore: SecureStore,
 ) : ViewModel() {
@@ -28,6 +31,7 @@ class SettingsViewModel @Inject constructor(
     data class State(
         val settings: AppSettings = AppSettings(),
         val cloudStatus: CloudSetupStatus = CloudSetupStatus.Loading,
+        val r2Status: R2SetupStatus = R2SetupStatus.Loading,
         val secureStorageWarning: String? = secureStore.storageWarning,
         val signedInEmail: String? = null,
     )
@@ -44,6 +48,11 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             cloudConfigRepository.status.collect { status ->
                 _state.update { it.copy(cloudStatus = status) }
+            }
+        }
+        viewModelScope.launch {
+            r2ConfigRepository.status.collect { status ->
+                _state.update { it.copy(r2Status = status) }
             }
         }
         viewModelScope.launch {

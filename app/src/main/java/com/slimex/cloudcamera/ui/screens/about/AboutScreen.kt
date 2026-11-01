@@ -132,8 +132,8 @@ fun AboutScreen(
                         text = "• Every capture is encrypted on this device before it is uploaded.\n" +
                             "• Encryption keys never leave the phone; they are sealed with a key that " +
                             "lives inside the Android Keystore.\n" +
-                            "• The Supabase bucket is private and protected by per-user row and object " +
-                            "policies.\n" +
+                            "• Media lives in a private Cloudflare R2 bucket that only your own Worker " +
+                            "can sign a URL for; every Supabase row is protected by per-user RLS.\n" +
                             "• Sharing goes through the system Sharesheet with a read-only content URI — " +
                             "no public links are created.\n" +
                             "• Release builds log nothing sensitive, and no analytics or telemetry is " +
@@ -148,7 +148,7 @@ fun AboutScreen(
                 SlimeCard {
                     Text(
                         text = "Credentials live in Keystore-encrypted storage on this device and can " +
-                            "be removed at any time from the Supabase setup screen. Your recovery code " +
+                            "be removed at any time from the Cloud configuration screen. Your recovery code " +
                             "is the only way back into an existing library after a reinstall.",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,

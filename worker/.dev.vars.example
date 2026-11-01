@@ -1,0 +1,21 @@
+# Placeholder values for local `wrangler dev` only (copy to `.dev.vars`, which is git-ignored).
+#
+# In production these are set with `wrangler secret put <NAME>` and are encrypted at rest by
+# Cloudflare. They must NEVER be committed, pasted into the Android app, or stored in Supabase.
+#
+# The Android app needs exactly one value from this file: the deployed Worker URL.
+
+# --- Cloudflare R2 (server-side only) ---------------------------------------
+R2_ACCOUNT_ID=your_cloudflare_account_id
+R2_ACCESS_KEY_ID=your_r2_access_key_id
+R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
+R2_BUCKET=your_private_bucket_name
+# Optional. Defaults to https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
+R2_S3_ENDPOINT=
+# Optional. R2 signs with "auto"; only change it if you use a jurisdiction endpoint.
+R2_REGION=auto
+
+# --- Supabase (used to verify the caller's JWT) ------------------------------
+SUPABASE_URL=https://your-project-ref.supabase.co
+# Publishable (or legacy anon) key. NEVER the service_role key.
+SUPABASE_ANON_KEY=your_publishable_key

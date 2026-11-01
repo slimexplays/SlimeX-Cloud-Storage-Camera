@@ -48,6 +48,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.slimex.cloudcamera.core.util.Formatters
 import com.slimex.cloudcamera.domain.model.CloudSetupStatus
+import com.slimex.cloudcamera.domain.model.R2SetupStatus
 import com.slimex.cloudcamera.domain.model.LocalMedia
 import com.slimex.cloudcamera.ui.components.BrandFooter
 import com.slimex.cloudcamera.ui.components.EmptyState
@@ -67,6 +68,7 @@ import com.slimex.cloudcamera.ui.theme.SlimePurple
 import com.slimex.cloudcamera.ui.theme.Spacing
 import com.slimex.cloudcamera.ui.theme.TextPrimary
 import com.slimex.cloudcamera.ui.theme.TextSecondary
+import com.slimex.cloudcamera.ui.theme.WarningAmber
 import java.io.File
 
 @Composable
@@ -112,7 +114,7 @@ fun HomeScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
-            item { CloudStatusCard(state.cloudStatus, onOpenCloudSetup) }
+            item { CloudStatusCard(state.cloudStatus, state.mediaStatus, onOpenCloudSetup) }
 
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
@@ -241,9 +243,36 @@ fun HomeScreen(
 }
 
 @Composable
-private fun CloudStatusCard(status: CloudSetupStatus, onOpenCloudSetup: () -> Unit) {
+private fun CloudStatusCard(
+    status: CloudSetupStatus,
+    mediaStatus: R2SetupStatus,
+    onOpenCloudSetup: () -> Unit,
+) {
     when (status) {
-        is CloudSetupStatus.Configured -> SlimeCard(onClick = onOpenCloudSetup) {
+        // Supabase alone is not enough any more: media needs the Cloudflare Worker endpoint too.
+        is CloudSetupStatus.Configured -> if (mediaStatus !is R2SetupStatus.Configured) {
+            SlimeCard(onClick = onOpenCloudSetup) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconBadge(icon = Icons.Rounded.CloudOff, size = 42.dp, tint = WarningAmber)
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Add your media storage",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = TextPrimary,
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Supabase is configured. Add the Cloudflare R2 Worker endpoint " +
+                                "so encrypted media can be uploaded.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                        )
+                    }
+                    StatusPill(text = "Media", tone = PillTone.AMBER)
+                }
+            }
+        } else SlimeCard(onClick = onOpenCloudSetup) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconBadge(icon = Icons.Rounded.Cloud, size = 42.dp)
                 Spacer(modifier = Modifier.width(14.dp))
@@ -262,7 +291,7 @@ private fun CloudStatusCard(status: CloudSetupStatus, onOpenCloudSetup: () -> Un
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                StatusPill(text = "Configured", tone = PillTone.GREEN)
+                StatusPill(text = "Connected", tone = PillTone.GREEN)
             }
         }
 
@@ -278,13 +307,13 @@ private fun CloudStatusCard(status: CloudSetupStatus, onOpenCloudSetup: () -> Un
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Connect your Supabase project",
+                        text = "Connect your cloud",
                         style = MaterialTheme.typography.titleSmall,
                         color = TextPrimary,
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Uploads stay queued until your cloud is configured.",
+                        text = "Uploads stay queued until Supabase and Cloudflare R2 are configured.",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                     )

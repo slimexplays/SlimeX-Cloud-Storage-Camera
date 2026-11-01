@@ -27,7 +27,7 @@ import com.slimex.cloudcamera.ui.screens.home.HomeScreen
 import com.slimex.cloudcamera.ui.screens.onboarding.OnboardingScreen
 import com.slimex.cloudcamera.ui.screens.settings.CameraPreferencesScreen
 import com.slimex.cloudcamera.ui.screens.settings.SettingsScreen
-import com.slimex.cloudcamera.ui.screens.settings.SupabaseConfigScreen
+import com.slimex.cloudcamera.ui.screens.settings.CloudConfigurationScreen
 import com.slimex.cloudcamera.ui.screens.storage.StorageScreen
 import com.slimex.cloudcamera.ui.screens.uploads.UploadQueueScreen
 
@@ -161,9 +161,12 @@ fun SlimeXNavHost(
             }
 
             composable(Destinations.CLOUD_SETUP) {
-                SupabaseConfigScreen(
+                CloudConfigurationScreen(
                     contentPadding = innerPadding,
                     onBack = { navController.popBackStack() },
+                    onOpenAccount = {
+                        navController.navigate(Destinations.ACCOUNT) { launchSingleTop = true }
+                    },
                 )
             }
 

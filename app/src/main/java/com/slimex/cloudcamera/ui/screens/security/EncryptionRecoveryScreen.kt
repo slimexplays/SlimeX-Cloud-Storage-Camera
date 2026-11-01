@@ -176,7 +176,7 @@ fun EncryptionRecoveryScreen(
                     )
                     Spacer(modifier = Modifier.height(Spacing.sm))
                     BulletLine("Every capture is encrypted before it leaves the app, with a fresh random 256-bit key and a fresh 96-bit nonce.")
-                    BulletLine("Only ciphertext is uploaded to your private Supabase bucket; the app never sends a key, a nonce or a password anywhere.")
+                    BulletLine("Only ciphertext is uploaded, straight to your private Cloudflare R2 bucket; the app never sends a key, a nonce or a password anywhere.")
                     BulletLine("Keys are sealed with a key that lives in the Android Keystore, so another app (or a copied file) cannot read them.")
                     BulletLine("Decryption happens only when you open or share a file, and only into private app cache.")
                 }

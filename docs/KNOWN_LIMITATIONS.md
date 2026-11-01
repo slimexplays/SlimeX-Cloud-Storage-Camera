@@ -61,7 +61,8 @@ Honest list of what this build does **not** do, so nothing in the spec is over-c
 
 13. Upload verification re-downloads objects **up to 64 MB** to hash them; larger videos are
     verified by existence + size + listing only (so a 500 MB clip does not double your traffic).
-14. The bucket caps objects at 500 MB (`storage.sql`). Raise the limit if you record longer clips.
+14. The R2 bucket/Worker caps a single object at 500 MB (`MAX_UPLOAD_BYTES`, hard ceiling in
+    `worker/src/validation.js`). Raise the var if you record longer clips.
 15. Cache clean-up never deletes pending or unverified files; only the upload pipeline deletes a
     local capture, and only after `UPLOADED`.
 16. WorkManager can be delayed by Doze/App Standby on aggressive OEM ROMs; the queue resumes on
@@ -71,15 +72,39 @@ Honest list of what this build does **not** do, so nothing in the spec is over-c
 
 ## Cloud / Supabase
 
-18. The bucket name `slimex-private-media` is fixed in the app (`AppConstants`); the SQL creates
-    exactly that name. Renaming it requires a code change.
+18. The bucket name is **not** in the app at all. It is the Worker secret `R2_BUCKET`, so it can be
+    renamed by updating the Worker only.
 19. Free-tier Supabase projects pause after inactivity; the app reports that as "Supabase
     unavailable" and retries.
-20. Deleting a user cascades rows but not storage objects — clean the bucket manually.
+20. Deleting a user cascades rows but not R2 objects — delete the `{userId}/` prefix manually.
 21. The app uses the REST endpoints directly (no Supabase SDK) because credentials are entered at
-    runtime. Endpoint paths follow the `auth/v1`, `rest/v1` and `storage/v1` APIs as of 2024/2025;
-    a future breaking API change would need a code update.
+    runtime. Endpoint paths follow the `auth/v1` and `rest/v1` APIs as of 2024/2025; a future
+    breaking API change would need a code update.
 22. There is no batch/multi-select delete, no albums, no favourites — none were requested.
+
+## Cloudflare R2 / Worker (Part 4)
+
+27. **The Worker was not deployed from this environment and no live R2 bucket was contacted.** What
+    was verified locally with `cd worker && npm test` (Node 22): route behaviour against a mocked
+    Supabase + R2 (auth, ownership, size/content-type limits, usage scoping, stat, delete, structured
+    errors) and SigV4 parity — the presigned PUT URL and the header-signed list request produce
+    **byte-identical** signatures to `aws4fetch` 1.0.20. Anything involving real Cloudflare
+    endpoints must be confirmed on your account.
+28. **Presigned URLs contain the bucket name and the R2 access key *id*** — that is inherent to S3
+    presigning and is not a secret leak (the secret key is never included). The app never displays,
+    logs or persists these URLs; they expire in 5 minutes.
+29. **Rate limiting is per-isolate** (in-memory). It blunts a single abusive client but is not a
+    global guarantee; add a Cloudflare WAF rate-limiting rule or a Durable Object for a hard limit.
+30. **Usage listing is capped at 10 000 objects per call** (10 pages × 1000). Beyond that the card
+    reports `truncated: true` and shows the subtotal rather than an invented number.
+31. **R2 publishes no per-bucket quota over the S3 API**, so the app shows "Not reported by
+    provider" for free space instead of estimating it.
+32. **Uploads are single-PUT**, so a 500 MB cap per object; there is no multipart resumable upload.
+    An interrupted upload restarts from zero (the encrypted temp file is kept, so no re-capture is
+    needed).
+33. The Worker uses **Supabase `/auth/v1/user`** for JWT verification (one round trip, cached ~60 s
+    per isolate) rather than local JWKS validation. That is the most tamper-proof option for a small
+    Worker, at the cost of a little latency on the first call.
 
 ## UI / UX
 

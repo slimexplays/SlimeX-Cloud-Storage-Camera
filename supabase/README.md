@@ -9,6 +9,10 @@ project from inside the app (`Settings → Supabase configuration`) and sign in 
 1. Sign in at <https://supabase.com> and create a new project.
 2. Wait for the database to finish provisioning.
 
+> **Part 4:** Supabase stores authentication and **metadata only**. Photos and videos live in a
+> private Cloudflare R2 bucket and are reached through your own Cloudflare Worker. There is no
+> Supabase Storage bucket to create, and the `storage.sql` script from Part 2 is gone.
+
 ## 2. Run the SQL (once, in this order)
 
 Open **SQL Editor → New query**, paste a file, run it, then continue with the next one:
@@ -16,14 +20,16 @@ Open **SQL Editor → New query**, paste a file, run it, then continue with the 
 | File | What it creates |
 | --- | --- |
 | [`schema.sql`](schema.sql) | `profiles`, `media_files`, `upload_jobs`, constraints, indexes, RLS policies, `media_usage` view, signup trigger |
-| [`storage.sql`](storage.sql) | Private `slimex-private-media` bucket (500 MB per object, `application/octet-stream`) and its per-user object policies |
 
-Both scripts are idempotent — re-running them is safe.
+The script is idempotent — re-running it is safe. If you ran the old `storage.sql` from Part 2, you
+may delete the empty Supabase Storage bucket; the app never reads or writes it any more.
 
 ### What the schema guarantees
 
 - `media_files.storage_path` must match `{user_id}/{year}/{month}/{unique_file_id}.enc`
-  (`media_files_path_owner` and `media_files_path_layout` checks).
+  (`media_files_path_owner` and `media_files_path_layout` checks). It is the **R2 object key**, the
+  same string the Worker validates before signing a URL — that is what keeps the database and the
+  bucket in agreement about who owns which object.
 - Every row is ciphertext (`media_files_encrypted_only`).
 - **No key material is stored in the database.** Part 3 removed `encryption_key`,
   `encryption_nonce`, `thumbnail_key` and `thumbnail_nonce`; the migration at the end of

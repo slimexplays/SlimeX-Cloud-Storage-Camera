@@ -21,7 +21,6 @@ class SupabaseConnectionTester @Inject constructor(
     private val titles = listOf(
         STEP_ENDPOINT,
         STEP_API_KEY,
-        STEP_BUCKET,
         STEP_TABLE,
     )
 
@@ -107,39 +106,33 @@ class SupabaseConnectionTester @Inject constructor(
         )
         emit()
 
-        // 3. Storage bucket (warning only — the SQL may not have been run yet)
+        // 3. media_files table (warning only — the SQL may not have been run yet).
+        // Media itself lives in Cloudflare R2, so there is no Supabase Storage bucket to probe.
         steps[2] = steps[2].copy(status = ConnectionStepStatus.RUNNING)
         emit()
-        val bucket = client.probeBucket(config)
-        steps[2] = bucketStep(bucket, config)
-        emit()
-
-        // 4. media_files table (warning only, same reasoning)
-        steps[3] = steps[3].copy(status = ConnectionStepStatus.RUNNING)
-        emit()
         val table = client.probeTable(config)
-        steps[3] = when {
-            table.transportError != null -> steps[3].copy(
+        steps[2] = when {
+            table.transportError != null -> steps[2].copy(
                 status = ConnectionStepStatus.WARNING,
                 detail = "Could not check the media table: ${table.transportError}",
                 required = false,
             )
-            table.isSuccessful -> steps[3].copy(
+            table.isSuccessful -> steps[2].copy(
                 status = ConnectionStepStatus.PASSED,
                 detail = "Table '${config.table}' is readable.",
                 required = false,
             )
-            table.code == 404 -> steps[3].copy(
+            table.code == 404 -> steps[2].copy(
                 status = ConnectionStepStatus.WARNING,
                 detail = "Table '${config.table}' missing — run supabase/schema.sql.",
                 required = false,
             )
-            table.isUnauthorized -> steps[3].copy(
+            table.isUnauthorized -> steps[2].copy(
                 status = ConnectionStepStatus.WARNING,
                 detail = "Table exists but requires a signed-in user (RLS) — sign in from Account.",
                 required = false,
             )
-            else -> steps[3].copy(
+            else -> steps[2].copy(
                 status = ConnectionStepStatus.WARNING,
                 detail = "HTTP ${table.code}",
                 required = false,
@@ -155,37 +148,9 @@ class SupabaseConnectionTester @Inject constructor(
         return AppResult.Success(report)
     }
 
-    private fun bucketStep(outcome: HttpOutcome, config: CloudConfig): ConnectionStep {
-        val base = ConnectionStep(title = STEP_BUCKET, required = false)
-        return when {
-            outcome.transportError != null -> base.copy(
-                status = ConnectionStepStatus.WARNING,
-                detail = "Could not check the bucket: ${outcome.transportError}",
-            )
-            outcome.isSuccessful -> base.copy(
-                status = ConnectionStepStatus.PASSED,
-                detail = "Bucket '${config.bucket}' is reachable.",
-            )
-            outcome.code == 404 || outcome.code == 400 -> base.copy(
-                status = ConnectionStepStatus.WARNING,
-                detail = "Bucket '${config.bucket}' missing — run supabase/storage.sql.",
-            )
-            outcome.isUnauthorized -> base.copy(
-                status = ConnectionStepStatus.WARNING,
-                detail = "Bucket is private and needs a signed-in user — expected. " +
-                    "Sign in from Account, and run supabase/storage.sql if it is missing.",
-            )
-            else -> base.copy(
-                status = ConnectionStepStatus.WARNING,
-                detail = "HTTP ${outcome.code}",
-            )
-        }
-    }
-
     private companion object {
         const val STEP_ENDPOINT = "Project endpoint reachable"
         const val STEP_API_KEY = "Publishable key accepted"
-        const val STEP_BUCKET = "Storage bucket available"
         const val STEP_TABLE = "Media table available"
     }
 }

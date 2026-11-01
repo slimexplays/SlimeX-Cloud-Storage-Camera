@@ -1,0 +1,19 @@
+# Deployment configuration for the SlimeX media Worker.
+#
+# Only NON-SECRET values belong in this file. The R2 credentials, the Supabase project URL and the
+# publishable key are Worker secrets (`wrangler secret put …`), never committed, never in the APK.
+
+name = "slimex-media"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# No R2 binding is declared on purpose: the Worker talks to R2 through the S3-compatible API with
+# the account credentials, which is the same code path the presigned URLs use.
+
+[vars]
+# Optional, non-secret tuning. Everything sensitive is a secret (see docs/CLOUDFLARE_R2_WORKER_SETUP.md).
+MAX_UPLOAD_BYTES = "524288000"   # 500 MB hard cap; the Worker never raises it above R2's single-PUT limit
+PRESIGN_TTL_SECONDS = "300"      # signed URL lifetime (max 900)
+PROVIDER_NAME = "Cloudflare R2"  # label the app shows for the storage provider
+ALLOWED_ORIGINS = ""             # comma separated list, only needed for browser-side probing
+ALLOWED_OPERATIONS = ""          # empty = all; otherwise a subset of upload,download,stat,delete,usage,health

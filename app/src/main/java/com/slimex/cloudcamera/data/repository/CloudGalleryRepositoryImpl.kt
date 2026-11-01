@@ -2,7 +2,7 @@ package com.slimex.cloudcamera.data.repository
 
 import com.slimex.cloudcamera.cloud.CloudSessionProvider
 import com.slimex.cloudcamera.cloud.SupabaseDataApi
-import com.slimex.cloudcamera.cloud.SupabaseStorageApi
+import com.slimex.cloudcamera.domain.repository.MediaStorageGateway
 import com.slimex.cloudcamera.core.result.AppFailure
 import com.slimex.cloudcamera.core.result.AppResult
 import com.slimex.cloudcamera.core.util.DispatchersProvider
@@ -25,7 +25,7 @@ import javax.inject.Singleton
 class CloudGalleryRepositoryImpl @Inject constructor(
     private val cloud: CloudSessionProvider,
     private val data: SupabaseDataApi,
-    private val storage: SupabaseStorageApi,
+    private val storage: MediaStorageGateway,
     private val crypto: MediaCrypto,
     private val staging: StagingStore,
     private val thumbnails: ThumbnailFactory,
@@ -75,9 +75,14 @@ class CloudGalleryRepositoryImpl @Inject constructor(
             media.thumbnailPath?.takeIf { it.isNotBlank() }?.let { add(it.trimStart('/')) }
         }
 
-        val removed = storage.remove(context.config, context.accessToken, keys)
-        // A missing object is fine — the goal is "gone", not "we deleted something".
-        if (removed is AppResult.Failure && !isMissing(removed.error)) return removed
+        // A missing object is fine — the goal is "gone", not "we deleted something", and the
+        // gateway already reports HTTP 404 from R2 as success.
+        keys.forEach { key ->
+            when (val removed = storage.delete(key)) {
+                is AppResult.Failure -> return removed
+                is AppResult.Success -> Unit
+            }
+        }
 
         val row = data.deleteMedia(context.config, context.accessToken, media.id, context.userId)
         if (row is AppResult.Failure) return row
@@ -102,12 +107,12 @@ class CloudGalleryRepositoryImpl @Inject constructor(
         val nonce = entry?.tn
 
         if (thumbPath != null && key != null && nonce != null) {
-            val context = when (val result = cloud.require()) {
-                is AppResult.Success -> result.data
+            when (cloud.require()) {
+                is AppResult.Success -> Unit
                 is AppResult.Failure -> return AppResult.Success(null)
             }
             val scratch = staging.scratchFile("thumb")
-            val result = storage.download(context.config, context.accessToken, thumbPath, scratch)
+            val result = storage.download(thumbPath, scratch)
             if (result is AppResult.Success) {
                 val decrypted = crypto.decrypt(scratch, cached, MediaKey(key, nonce))
                 runCatching { scratch.delete() }
@@ -139,10 +144,8 @@ class CloudGalleryRepositoryImpl @Inject constructor(
             return AppResult.Success(cached)
         }
 
-        val context = when (val result = cloud.require()) {
-            is AppResult.Success -> result.data
-            is AppResult.Failure -> return result
-        }
+        // The storage gateway resolves the Worker endpoint and the session itself, so a missing
+        // configuration surfaces as a ready-to-show failure from the download call below.
         if (!media.encrypted) {
             return AppResult.Failure(
                 AppFailure.storage("This file was stored unencrypted, so it cannot be opened safely."),
@@ -162,9 +165,7 @@ class CloudGalleryRepositoryImpl @Inject constructor(
 
         val scratch = staging.scratchFile("download")
         val downloaded = storage.download(
-            config = context.config,
-            accessToken = context.accessToken,
-            objectPath = media.objectKey,
+            objectKey = media.objectKey,
             target = scratch,
             onProgress = { fraction -> onProgress(fraction * 0.9f) },
         )
@@ -225,8 +226,4 @@ class CloudGalleryRepositoryImpl @Inject constructor(
             }
         }
     }
-
-    private fun isMissing(failure: AppFailure): Boolean =
-        failure.message.contains("not found", ignoreCase = true) ||
-            failure.message.contains("404")
 }

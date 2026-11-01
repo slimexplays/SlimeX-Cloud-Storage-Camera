@@ -40,6 +40,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.slimex.cloudcamera.BuildConfig
 import com.slimex.cloudcamera.domain.model.CloudSetupStatus
+import com.slimex.cloudcamera.domain.model.R2SetupStatus
 import com.slimex.cloudcamera.ui.AppPermissions
 import com.slimex.cloudcamera.ui.components.BrandFooter
 import com.slimex.cloudcamera.ui.components.InlineBanner
@@ -124,11 +125,23 @@ fun SettingsScreen(
                         },
                     )
                     SettingRow(
-                        title = "Supabase configuration",
-                        subtitle = when (val status = state.cloudStatus) {
-                            is CloudSetupStatus.Configured -> status.host
-                            CloudSetupStatus.NotConfigured -> "Not configured yet"
-                            CloudSetupStatus.Loading -> "Checking…"
+                        title = "Cloud configuration",
+                        subtitle = buildString {
+                            append(
+                                when (val status = state.cloudStatus) {
+                                    is CloudSetupStatus.Configured -> "Supabase: ${status.host}"
+                                    CloudSetupStatus.NotConfigured -> "Supabase: not configured"
+                                    CloudSetupStatus.Loading -> "Supabase: checking…"
+                                },
+                            )
+                            append(" · ")
+                            append(
+                                when (val status = state.r2Status) {
+                                    is R2SetupStatus.Configured -> "R2: ${status.host}"
+                                    R2SetupStatus.NotConfigured -> "R2: not configured"
+                                    R2SetupStatus.Loading -> "R2: checking…"
+                                },
+                            )
                         },
                         icon = Icons.Rounded.Cloud,
                         onClick = onOpenCloudSetup,
@@ -136,8 +149,16 @@ fun SettingsScreen(
                         trailing = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 StatusPill(
-                                    text = if (state.cloudStatus is CloudSetupStatus.Configured) "Ready" else "Setup",
-                                    tone = if (state.cloudStatus is CloudSetupStatus.Configured) {
+                                    text = if (state.cloudStatus is CloudSetupStatus.Configured &&
+                                        state.r2Status is R2SetupStatus.Configured
+                                    ) {
+                                        "Ready"
+                                    } else {
+                                        "Setup"
+                                    },
+                                    tone = if (state.cloudStatus is CloudSetupStatus.Configured &&
+                                        state.r2Status is R2SetupStatus.Configured
+                                    ) {
                                         PillTone.GREEN
                                     } else {
                                         PillTone.AMBER
@@ -279,7 +300,7 @@ fun SettingsScreen(
                 SlimeCard(contentPadding = PaddingValues(0.dp)) {
                     SettingRow(
                         title = "Storage",
-                        subtitle = "Local media and bucket usage",
+                        subtitle = "Local media and cloud storage usage",
                         icon = Icons.Rounded.Storage,
                         onClick = onOpenStorage,
                         showDivider = true,

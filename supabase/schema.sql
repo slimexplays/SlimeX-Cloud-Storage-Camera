@@ -1,7 +1,10 @@
 -- ============================================================================
---  SlimeX Cloud Camera — Postgres schema (Part 2)
---  Run this once in the Supabase SQL editor of YOUR project, then run
---  storage.sql. Nothing here contains credentials.
+--  SlimeX Cloud Camera — Postgres schema (Parts 2 + 4)
+--  Run this once in the Supabase SQL editor of YOUR project. Nothing here contains credentials.
+--
+--  Part 4: Supabase is metadata ONLY. Media bytes live in a private Cloudflare R2 bucket and are
+--  reached exclusively through the user's Cloudflare Worker (see docs/CLOUDFLARE_R2_WORKER_SETUP.md).
+--  No Supabase Storage bucket is created, and R2 credentials must never be stored in these tables.
 --
 --  Tables:
 --    public.profiles      one row per auth user (mirrors auth.users)
@@ -10,8 +13,9 @@
 --
 --  Security model:
 --    * RLS is enabled on every table and every policy is scoped to auth.uid().
---    * The bucket is private; media only ever reaches the device with the
---      owner's access token (see storage.sql).
+--    * media_files.storage_path is the object KEY inside the private R2 bucket
+--      ({user_id}/{year}/{month}/{unique_file_id}.enc); it is never a URL.
+--    * The R2 bucket is private and only the Cloudflare Worker holds its credentials.
 --    * File bytes are AES-256-GCM ciphertext. The per-file key/nonce live in the
 --      row so the owner can decrypt the file again after reinstalling the app —
 --      they are readable only by that owner (RLS), never by the anon key alone.
@@ -70,7 +74,7 @@ create table if not exists public.media_files (
 );
 
 comment on table public.media_files is
-    'Metadata for every object in the private bucket. storage_path is {user_id}/{year}/{month}/{unique_file_id}.enc';
+    'Metadata for every object in the private Cloudflare R2 bucket. storage_path is the R2 object key {user_id}/{year}/{month}/{unique_file_id}.enc — never a URL and never a credential.';
 
 create index if not exists media_files_user_created_idx
     on public.media_files (user_id, created_at desc);

@@ -1,18 +1,19 @@
 # SlimeX Cloud Camera
 
-A single Android app for private, encrypted capture: a pure-black CameraX camera, encrypted
-uploads to **your own Supabase project**, a private cloud gallery and delayed Sharesheet
-hand-off. No keys, tokens or secrets exist anywhere in the APK — you configure your project
-after installing.
+A single Android app for private, encrypted capture: a pure-black CameraX camera, AES-256-GCM
+encryption on the device, encrypted media in **your own private Cloudflare R2 bucket** reached only
+through **your own Cloudflare Worker**, metadata and authentication in **your own Supabase project**,
+a private cloud gallery and delayed Sharesheet hand-off. No keys, tokens or secrets exist anywhere in
+the APK — you configure your two endpoints after installing.
 
 **Made By Slime Plays** · Package `com.slimex.cloudcamera` · Kotlin + Jetpack Compose
 
-> **Parts 1 + 2 + 3 are complete and merged into this one project.** One app, one package, one
+> **Parts 1 + 2 + 3 + 4 are complete and merged into this one project.** One app, one package, one
 > navigation graph, one APK — there is no second module, no demo build and no mock screen.
 
 ---
 
-## Status — Parts 1, 2 and 3 complete
+## Status — Parts 1, 2, 3 and 4 complete
 
 This repository is the **single, unified project** for the whole specification: one app, one
 package, one navigation graph, one APK. Each part was added to the existing project — nothing was
@@ -39,6 +40,12 @@ re-created, and every Part 1 screen still works exactly as before.
 | Expanded failure handling (low storage, corrupt capture, missing key, reset vault) | ✅ **Part 3** |
 | Unit tests for the recovery envelope and key ring format | ✅ **Part 3** |
 | Setup guides, testing checklist, known limitations, build verification report | ✅ **Part 3** |
+| Two-card **Cloud configuration** screen (Supabase + Cloudflare R2, per-step tests, no fake "Connected") | ✅ **Part 4** |
+| Cloudflare R2 media backend behind a Cloudflare Worker (Supabase-JWT auth, presigned URLs, ownership checks) | ✅ **Part 4** |
+| Worker source (`worker/`): 7 JSON endpoints, SigV4 on WebCrypto, size/rate limits, structured errors | ✅ **Part 4** |
+| Supabase is metadata-only (no Storage bucket, no R2 credentials, no key columns) | ✅ **Part 4** |
+| Storage status: verified provider usage vs recorded metadata, "not reported" instead of a fake quota | ✅ **Part 4** |
+| Worker deployment guide + API reference + 13 offline Worker tests | ✅ **Part 4** |
 
 ---
 
@@ -79,22 +86,39 @@ re-created, and every Part 1 screen still works exactly as before.
   back and SHA-256-checked against the local ciphertext. Videos drop both the original and the
   encrypted copy after that check.
 
-### Supabase (runtime configuration, private bucket)
+### Cloud configuration (two services, two jobs — Part 4)
 
-1. **Settings → Supabase configuration** — paste the Project URL and the *publishable/anon*
-   key, run **Test connection** (endpoint → key → bucket → table), then **Save**. Credentials
-   are stored with `EncryptedSharedPreferences` (Android Keystore, AES-256).
-2. **Account** — sign in or create an account with email/password. Access and refresh tokens
-   are stored in the same Keystore-encrypted store, refreshed 60 s before expiry, and cleared
-   when the project is removed or changed.
-3. Objects are written to the **private** bucket `slimex-private-media` at
-   `{user_id}/{year}/{month}/{unique_file_id}.enc`, with an encrypted sidecar preview at
-   `…/{unique_file_id}.thumb.enc`.
-4. Metadata lives in `public.media_files`; the queue mirrors its state in
-   `public.upload_jobs`. Both tables use RLS scoped to `auth.uid()`.
-5. No service-role key, no secret key, no public bucket, no signed "anyone with the link" URLs.
-   Every storage call carries the signed-in user's access token and the bucket policies limit
-   each user to their own folder.
+**Settings → Cloud configuration** holds two independent cards. Neither can show "Connected" until
+its own test has actually passed.
+
+**Supabase — authentication + PostgreSQL metadata**
+
+1. Paste the Project URL and the *publishable/anon* key, run **Test connection**
+   (endpoint → key → `media_files` table), then **Save**. Values go to
+   `EncryptedSharedPreferences` (Android Keystore, AES-256). A `service_role` or `sb_secret_…`
+   key is rejected before it is ever stored.
+2. **Account** — sign in or create an account with email/password. Access and refresh tokens live
+   in the same Keystore-encrypted store, refresh 60 s before expiry, and are cleared when the
+   project is removed or changed.
+3. Supabase stores **metadata only**: `public.media_files` (type, size, MIME, checksum, object key,
+   timestamps) and `public.upload_jobs` (queue bookkeeping). Both tables are RLS-scoped to
+   `auth.uid()`. There is no Supabase Storage bucket, no media byte and no key column.
+
+**Cloudflare R2 — the private bucket for encrypted media**
+
+1. Paste only the **Worker endpoint** (`https://slimex-media.<you>.workers.dev`) and keep the
+   provider label "Cloudflare R2". `Test connection` runs four steps: Worker endpoint → Supabase
+   session accepted → Cloudflare R2 reachable → storage access verified.
+2. The Worker holds the R2 account id, access key, secret key, bucket name and S3 endpoint as
+   encrypted secrets. **The APK contains none of them** — not in `AppConstants`, not in prefs, not
+   in the database. Entering a Supabase project URL by mistake is refused by validation.
+3. Uploads go `authorize → PUT presigned URL → stat verify`, so the ciphertext streams straight to
+   R2 and the phone never holds a credential. Downloads use a 5-minute presigned GET.
+4. Object keys are `{user_id}/{year}/{month}/{unique_file_id}.enc` (+ `.thumb.enc`). The Worker
+   rejects any key that does not start with the *verified* Supabase user id, so cross-user access
+   is impossible even with a modified client.
+5. The R2 bucket has no public access and no public URL; the Worker never returns a bucket name, a
+   credential or a URL for an object you do not own.
 
 ### Upload queue
 
@@ -161,9 +185,15 @@ Settings → Encryption & Recovery → one recovery code (SLIMEX-KEY-1:…)
 - If the Keystore is unavailable, the app fails closed: uploads are blocked rather than writing
   keys somewhere weaker.
 
-### Storage dashboard
+### Storage dashboard & cloud status
 
-- Cloud usage, file counts and photo/video split (computed from your own rows).
+- **Verified usage** — bytes/objects the Worker listed from your own R2 prefix.
+- **Recorded metadata** — what `media_files` in Supabase says you uploaded.
+  The two are shown side by side and labelled, because they legitimately differ while an upload or
+  delete is in flight.
+- **Free quota: "Not reported by provider"** — R2 publishes no per-bucket quota over the S3 API, so
+  the app says so instead of inventing a number.
+- Provider label, Worker reachability, bucket readiness, last-checked time.
 - Pending and failed uploads, uploaded bytes this session.
 - Device figures: waiting-to-upload, encrypted copies, thumbnails, viewer cache, share cache.
 - **Clear caches** only touches evictable caches. Files that are pending or unverified are
@@ -179,15 +209,20 @@ app/src/main/java/com/slimex/cloudcamera/
 ├── MainActivity.kt                 single activity, edge-to-edge, splash theme
 ├── auth/SupabaseAuthManager.kt     GoTrue session: sign in/up, refresh, sign out
 ├── camera/                         CameraController (CameraX) + capture models
-├── cloud/                          Supabase REST layer
+├── cloud/                          cloud transport layer
 │   ├── SupabaseAuthApi.kt          auth/v1 signup, token, refresh, logout
-│   ├── SupabaseStorageApi.kt       private bucket: upload, download, list, remove
 │   ├── SupabaseDataApi.kt          media_files + upload_jobs (PostgREST)
 │   ├── CloudSessionProvider.kt     config + non-expired session in one step
 │   ├── SupabaseRestClient.kt       diagnostics-only probing used by setup
+│   ├── SupabaseConnectionTester.kt ordered Supabase checks for the setup card
+│   ├── r2/                         Cloudflare R2 through the Worker (Part 4)
+│   │   ├── R2WorkerClient.kt       the 7 Worker endpoints, error mapping
+│   │   ├── WorkerMediaStorage.kt   MediaStorageGateway: authorize → PUT/GET, stat, delete
+│   │   ├── R2ConnectionTester.kt   4-step media backend diagnostic
+│   │   └── R2Validation.kt         Worker URL / provider-name validation
 │   └── SupabaseValidation.kt / HttpOutcome.kt / CloudFailures.kt
 ├── core/
-│   ├── constants/AppConstants.kt   non-sensitive constants (bucket, dirs, cache names)
+│   ├── constants/AppConstants.kt   non-sensitive constants (dirs, cache names, provider label)
 │   ├── network/ConnectivityObserver.kt
 │   ├── result/AppResult.kt         typed Success/Failure + FailureKind
 │   └── util/                       dispatchers, formatters, StoragePaths, SecureLog
@@ -222,8 +257,9 @@ app/src/main/java/com/slimex/cloudcamera/
 └── di/                             AppModule + RepositoryModule
 ```
 
-`supabase/schema.sql` and `supabase/storage.sql` are the one-time database setup; see
-[`supabase/README.md`](supabase/README.md).
+`supabase/schema.sql` is the one-time database setup (metadata only); see
+[`supabase/README.md`](supabase/README.md). The media backend is the Cloudflare Worker in
+[`worker/`](worker) — deploy it with [`docs/CLOUDFLARE_R2_WORKER_SETUP.md`](docs/CLOUDFLARE_R2_WORKER_SETUP.md).
 
 ---
 
@@ -284,8 +320,10 @@ apksigner sign --ks slimex-release.jks \
 ## First run
 
 1. **Launch** → branded splash → privacy explanation → contextual permissions.
-2. **Settings → Supabase configuration** → paste URL + publishable key → **Test connection** →
-   **Save**. Run the SQL from `supabase/` once in your project.
+2. **Settings → Cloud configuration → Supabase** → paste URL + publishable key →
+   **Test connection** → **Save**. Run `supabase/schema.sql` once in your project.
+   Then **Cloud configuration → Cloudflare R2** → paste the Worker URL → **Test connection** →
+   **Save** (deploy the Worker first: [`docs/CLOUDFLARE_R2_WORKER_SETUP.md`](docs/CLOUDFLARE_R2_WORKER_SETUP.md)).
 3. **Account** → create an account (confirm the email if your project requires it) → sign in.
 4. **Settings → Encryption & Recovery** → create a recovery code and store it off-device. Do this
    before you accumulate media you cannot afford to lose: it is the only way back into your
@@ -295,19 +333,24 @@ apksigner sign --ks slimex-release.jks \
 6. **Cloud** → browse, search, sort, open, play, share, delete.
 7. **Storage** → see cloud + device usage, pending/failed uploads, clear caches.
 
-The app is usable without Supabase: capture, the queue (blocked), storage and settings all
-work; nothing is uploaded and nothing is lost.
+The app is usable without either service: capture, the queue (blocked), storage and settings all
+work; nothing is uploaded and nothing is lost. Both cards must be green before an upload can start,
+and *neither* card shows "Connected" until its own test has passed.
 
 ---
 
 ## Privacy & security model
 
-- No analytics, no ad SDKs, no third-party servers; the only network peer is your own project.
-- No hardcoded credentials: the URL and publishable key are typed in and stored encrypted.
-  Service-role/secret keys are rejected at validation, including a JWT `role: service_role`
-  claim check.
-- The bucket is private and RLS-protected; storage policies compare the first path segment to
-  `auth.uid()`.
+- No analytics, no ad SDKs, no third-party servers; the only network peers are your own Supabase
+  project and your own Cloudflare Worker.
+- No hardcoded credentials: the Supabase URL + publishable key and the Worker URL are typed in and
+  stored encrypted. Service-role/secret keys are rejected at validation, including a JWT
+  `role: service_role` claim check.
+- **No R2 credential exists in the app at all.** The account id, access key, secret key and bucket
+  name live only as Cloudflare Worker secrets. The Worker verifies the Supabase JWT, derives the
+  `{userId}/` prefix itself and returns a 5-minute presigned URL for one object.
+- The R2 bucket is private: no public access, no public URL, no `r2.dev` development URL. Object
+  ownership is enforced by the Worker before a URL is signed, and metadata ownership by RLS.
 - File contents are AES-256-GCM ciphertext at rest in the bucket. The per-file keys live only on
   the device (Keystore-wrapped key ring) and are **never written to Supabase**, so the cloud holds
   nothing that can decrypt your media. Reading a file requires the device key *and* an
@@ -333,8 +376,11 @@ work; nothing is uploaded and nothing is lost.
   cannot decode will not play.
 - Upload verification downloads the object back only up to 64 MB (larger files are verified by
   size + listing) so a 500 MB video does not double the traffic.
-- The bucket enforces `application/octet-stream` and a 500 MB per-object limit; raise the limit
-  in `storage.sql` if you record longer clips.
+- The Worker authorises `application/octet-stream` only and caps objects at 500 MB
+  (`MAX_UPLOAD_BYTES`); raise the var if you record longer clips (ceiling stays 500 MB).
+- The Worker was **not** deployed from this repository's authoring environment — signature parity
+  with `aws4fetch` and the route behaviour were verified offline, but the real Cloudflare endpoints
+  must be confirmed on your account. See [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
 - Keys are device-bound by design. Opening a library on a second device requires exporting the
   recovery code on the first device and importing it on the second one.
 - Losing both the recovery code and its passphrase is unrecoverable — there is no server-side
@@ -376,7 +422,11 @@ overlay controls, no purple decoration.
   conflated persist channel so progress updates never hammer disk.
 - **REST, not the SDK** — the Supabase Kotlin SDK binds credentials at build time; this app
   needs runtime configuration, so `cloud/` is a small, explicit OkHttp + kotlinx.serialization
-  client.
+  client. The media side uses `MediaStorageGateway`, an interface with exactly one implementation
+  (`WorkerMediaStorage`), so nothing above it knows the Worker protocol.
+- **Presigned transfer, not proxying** — the Worker signs a URL and the phone streams ciphertext
+  directly to R2. A 500 MB video therefore never passes through a Worker (which has CPU/memory
+  limits), and the Worker stays a small, auditable authorisation service.
 
 ## Tests
 
@@ -384,23 +434,37 @@ overlay controls, no purple decoration.
 ./gradlew :app:testDebugUnitTest
 ```
 
-Covers formatters, the persisted queue DTO, the bucket path builder (`{user}/{year}/{month}/{id}`),
+Covers formatters, the persisted queue DTO, the object-key builder (`{user}/{year}/{month}/{id}`),
 upload state semantics, queue summary maths, the gallery models, the **recovery envelope**
 (round trip, wrong passphrase, tampered bytes, salt/nonce freshness, whitespace tolerance) and the
 **key ring JSON format**.
 
 The recovery tests are pure JVM tests — no emulator and no Robolectric needed.
 
+The Cloudflare Worker has its own offline suite:
+
+```bash
+cd worker && npm install && npm test
+```
+
+13 tests: route behaviour with a mocked Supabase + R2 (auth, ownership, traversal rejection,
+size/content-type limits, usage scoping, stat, delete, operation allowlist, structured errors) and
+**SigV4 parity** — the
+presigned PUT URL and the header-signed list request produce byte-identical signatures to
+`aws4fetch` 1.0.20.
+
 ### Documentation
 
 | Document | Contents |
 | --- | --- |
 | [`docs/ANDROID_STUDIO_SETUP.md`](docs/ANDROID_STUDIO_SETUP.md) | open the project, SDK setup, run on a device, build debug/release APKs |
-| [`docs/SUPABASE_SETUP.md`](docs/SUPABASE_SETUP.md) | create the project, run the SQL, create the private bucket, auth settings |
-| [`docs/TESTING_CHECKLIST.md`](docs/TESTING_CHECKLIST.md) | the 20 required test scenarios with expected results (Realme C31 / API 31) |
+| [`docs/SUPABASE_SETUP.md`](docs/SUPABASE_SETUP.md) | create the project, run the SQL, auth settings (metadata only) |
+| [`docs/CLOUDFLARE_R2_WORKER_SETUP.md`](docs/CLOUDFLARE_R2_WORKER_SETUP.md) | create the private R2 bucket, scoped token, deploy + verify the Worker, API reference, limits, troubleshooting |
+| [`docs/TESTING_CHECKLIST.md`](docs/TESTING_CHECKLIST.md) | the 20 required test scenarios plus 14 Part 4 cloud tests, with expected results (Realme C31 / API 31) |
 | [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) | what this build genuinely cannot do, and why |
 | [`docs/BUILD_VERIFICATION.md`](docs/BUILD_VERIFICATION.md) | what was statically verified, what still needs a real Gradle run |
-| [`supabase/README.md`](supabase/README.md) | SQL scripts, RLS policies, bucket policy notes |
+| [`supabase/README.md`](supabase/README.md) | SQL script, RLS policies, metadata-only notes |
+| [`worker/README.md`](worker/README.md) | Worker file map, quick start, guarantees |
 
 ---
 

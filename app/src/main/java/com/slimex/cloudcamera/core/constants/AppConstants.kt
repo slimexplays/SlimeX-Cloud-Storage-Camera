@@ -7,8 +7,11 @@ object AppConstants {
     const val DEVELOPER_CREDIT = "Made By Slime Plays"
     const val PACKAGE_NAME = "com.slimex.cloudcamera"
 
-    /** Default bucket / table names created by the SQL in `supabase/`. */
-    const val DEFAULT_BUCKET = "slimex-private-media"
+    /**
+     * Media live in a private Cloudflare R2 bucket reached through the user's Worker.
+     * Supabase only holds auth + metadata, so there is no Supabase Storage bucket any more.
+     */
+    const val DEFAULT_STORAGE_PROVIDER = "Cloudflare R2"
     const val MEDIA_TABLE = "media_files"
     const val PROFILES_TABLE = "profiles"
     const val UPLOAD_JOBS_TABLE = "upload_jobs"

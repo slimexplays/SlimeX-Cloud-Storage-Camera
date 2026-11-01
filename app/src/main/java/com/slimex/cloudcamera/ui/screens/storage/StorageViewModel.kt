@@ -5,12 +5,15 @@ import androidx.lifecycle.viewModelScope
 import com.slimex.cloudcamera.core.result.AppResult
 import com.slimex.cloudcamera.domain.model.AuthStatus
 import com.slimex.cloudcamera.domain.model.LocalStorageSummary
+import com.slimex.cloudcamera.domain.model.ProviderUsage
 import com.slimex.cloudcamera.domain.model.RemoteUsage
 import com.slimex.cloudcamera.domain.model.UploadQueueSummary
 import com.slimex.cloudcamera.domain.repository.AuthRepository
 import com.slimex.cloudcamera.domain.repository.CloudConfigRepository
 import com.slimex.cloudcamera.domain.repository.CloudGalleryRepository
 import com.slimex.cloudcamera.domain.repository.LocalMediaRepository
+import com.slimex.cloudcamera.domain.repository.MediaStorageGateway
+import com.slimex.cloudcamera.domain.repository.R2ConfigRepository
 import com.slimex.cloudcamera.domain.repository.UploadRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +30,8 @@ class StorageViewModel @Inject constructor(
     private val cloudConfigRepository: CloudConfigRepository,
     private val uploadRepository: UploadRepository,
     private val authRepository: AuthRepository,
+    private val r2ConfigRepository: R2ConfigRepository,
+    private val storage: MediaStorageGateway,
 ) : ViewModel() {
 
     data class State(
@@ -38,6 +43,12 @@ class StorageViewModel @Inject constructor(
         val remoteError: String? = null,
         val cloudConfigured: Boolean = false,
         val signedIn: Boolean = false,
+        val mediaProviderLabel: String = "Cloudflare R2",
+        val mediaConfigured: Boolean = false,
+        val bucketReady: Boolean? = null,
+        val verifiedUsage: ProviderUsage? = null,
+        val verifiedLoading: Boolean = false,
+        val verifiedError: String? = null,
         val message: String? = null,
     )
 
@@ -50,6 +61,20 @@ class StorageViewModel @Inject constructor(
                 _state.update { it.copy(cloudConfigured = config != null) }
                 if (config != null) loadRemoteUsage() else _state.update {
                     it.copy(remoteUsage = null, remoteError = null)
+                }
+            }
+        }
+        viewModelScope.launch {
+            r2ConfigRepository.config.collect { r2 ->
+                _state.update {
+                    it.copy(
+                        mediaConfigured = r2 != null,
+                        mediaProviderLabel = r2?.providerName
+                            ?: com.slimex.cloudcamera.core.constants.AppConstants.DEFAULT_STORAGE_PROVIDER,
+                    )
+                }
+                if (r2 != null) loadVerifiedUsage() else _state.update {
+                    it.copy(verifiedUsage = null, verifiedError = null, bucketReady = null)
                 }
             }
         }
@@ -75,6 +100,36 @@ class StorageViewModel @Inject constructor(
                 }
             }
             if (_state.value.cloudConfigured) loadRemoteUsage()
+            if (_state.value.mediaConfigured) loadVerifiedUsage()
+        }
+    }
+
+    /**
+     * Verified usage comes from the storage provider (the Worker lists the caller's own prefix),
+     * which is why it is shown separately from the counts recorded in Supabase.
+     */
+    private fun loadVerifiedUsage() {
+        viewModelScope.launch {
+            _state.update { it.copy(verifiedLoading = true, verifiedError = null) }
+            val bucketReady = when (val health = storage.health()) {
+                is AppResult.Success -> health.data.bucketReady
+                is AppResult.Failure -> null
+            }
+            val usage = storage.usage()
+            _state.update { current ->
+                current.copy(
+                    verifiedLoading = false,
+                    bucketReady = bucketReady,
+                    verifiedUsage = when (usage) {
+                        is AppResult.Success -> usage.data
+                        is AppResult.Failure -> current.verifiedUsage
+                    },
+                    verifiedError = when (usage) {
+                        is AppResult.Failure -> usage.error.message
+                        is AppResult.Success -> null
+                    },
+                )
+            }
         }
     }
 

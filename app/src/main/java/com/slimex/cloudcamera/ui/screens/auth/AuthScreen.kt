@@ -95,7 +95,8 @@ fun AuthScreen(
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = "Sign in with an email and password created in your own Supabase project. " +
-                    "Only you can read your files — the bucket is private and every row is protected by RLS.",
+                    "Only you can read your files — the R2 bucket is private, signed URLs expire " +
+                    "in minutes, and every metadata row is protected by RLS.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
             )
@@ -111,7 +112,7 @@ fun AuthScreen(
                     )
                     Spacer(modifier = Modifier.height(Spacing.md))
                     SlimeXButton(
-                        text = "Open cloud setup",
+                        text = "Open cloud settings",
                         onClick = onOpenCloudSetup,
                         style = SlimeXButtonStyle.SECONDARY,
                     )

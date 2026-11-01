@@ -4,12 +4,14 @@ import com.slimex.cloudcamera.auth.SupabaseAuthManager
 import com.slimex.cloudcamera.data.repository.CloudConfigRepositoryImpl
 import com.slimex.cloudcamera.data.repository.CloudGalleryRepositoryImpl
 import com.slimex.cloudcamera.data.repository.LocalMediaRepositoryImpl
+import com.slimex.cloudcamera.data.repository.R2ConfigRepositoryImpl
 import com.slimex.cloudcamera.data.repository.SettingsRepositoryImpl
 import com.slimex.cloudcamera.data.repository.UploadRepositoryImpl
 import com.slimex.cloudcamera.domain.repository.AuthRepository
 import com.slimex.cloudcamera.domain.repository.CloudConfigRepository
 import com.slimex.cloudcamera.domain.repository.CloudGalleryRepository
 import com.slimex.cloudcamera.domain.repository.LocalMediaRepository
+import com.slimex.cloudcamera.domain.repository.R2ConfigRepository
 import com.slimex.cloudcamera.domain.repository.SettingsRepository
 import com.slimex.cloudcamera.domain.repository.UploadRepository
 import dagger.Binds
@@ -45,4 +47,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindUploadRepository(impl: UploadRepositoryImpl): UploadRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindR2ConfigRepository(impl: R2ConfigRepositoryImpl): R2ConfigRepository
 }

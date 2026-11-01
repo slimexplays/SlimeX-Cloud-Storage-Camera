@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -123,12 +124,29 @@ fun StorageScreen(
             Spacer(modifier = Modifier.height(Spacing.md))
 
             SlimeCard {
-                Text(
-                    text = "Cloud library",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = TextPrimary,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Cloud library",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = TextPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    StatusPill(
+                        text = state.mediaProviderLabel,
+                        tone = if (state.mediaConfigured) PillTone.PURPLE else PillTone.NEUTRAL,
+                    )
+                }
                 Spacer(modifier = Modifier.height(Spacing.sm))
+                if (state.mediaConfigured) {
+                    MetricRow(
+                        label = "Bucket",
+                        value = when (state.bucketReady) {
+                            true -> "Private · ready"
+                            false -> "Not reachable"
+                            null -> "Unverified"
+                        },
+                    )
+                }
                 when {
                     !state.cloudConfigured -> {
                         Text(
@@ -160,7 +178,8 @@ fun StorageScreen(
                         )
                     }
 
-                    state.remoteLoading && state.remoteUsage == null -> {
+                    (state.remoteLoading || state.verifiedLoading) &&
+                        state.remoteUsage == null && state.verifiedUsage == null -> {
                         Text(
                             text = "Reading the bucket…",
                             style = MaterialTheme.typography.bodySmall,
@@ -171,17 +190,33 @@ fun StorageScreen(
                     else -> {
                         val usage = state.remoteUsage
                         MetricRow(
-                            label = "Used in your bucket",
+                            label = "Verified usage (provider)",
+                            value = state.verifiedUsage?.let { Formatters.bytes(it.totalBytes) } ?: "—",
+                        )
+                        MetricRow(
+                            label = "Recorded metadata",
                             value = Formatters.bytes(usage?.totalBytes ?: 0L),
                         )
                         MetricRow(
-                            label = "Files stored",
+                            label = "Files recorded",
                             value = (usage?.assetCount ?: 0).toString(),
                         )
                         MetricRow(
                             label = "Photos / videos",
                             value = "${usage?.photoCount ?: 0} / ${usage?.videoCount ?: 0}",
                         )
+                        MetricRow(
+                            label = "Free quota",
+                            value = "Not reported by provider",
+                        )
+                        if (state.verifiedError != null) {
+                            Spacer(modifier = Modifier.height(Spacing.sm))
+                            Text(
+                                text = state.verifiedError.orEmpty(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextSecondary,
+                            )
+                        }
                         if (state.remoteError != null) {
                             Spacer(modifier = Modifier.height(Spacing.sm))
                             Text(
