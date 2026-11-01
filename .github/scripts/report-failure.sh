@@ -35,7 +35,19 @@ emit() {
 
 echo "::error::$TITLE — digest below (first compiler errors, then Gradle's failure block)"
 
-# 1. Compiler errors first: these are what usually break the build.
+# 1. Failing unit tests (their names never appear in the Gradle failure block).
+mapfile -t TESTFAILS < <(grep -E "^(\S+ )?[A-Za-z0-9_.]+(Test|Tests) > .*FAILED$|^[A-Za-z0-9_.]+ > .*FAILED$" "$CLEAN" | head -n 10)
+for line in "${TESTFAILS[@]:-}"; do
+  [ -n "$line" ] && emit "$line"
+done
+
+# 2. R8 / resource shrinking problems (release builds only).
+mapfile -t R8LINES < <(grep -E "Missing class|ERROR: R8|^R8: |Missing classes detected|Compilation failed to complete" "$CLEAN" | head -n 14)
+for line in "${R8LINES[@]:-}"; do
+  [ -n "$line" ] && emit "$line"
+done
+
+# 3. Compiler errors: these are what usually break the build.
 mapfile -t COMPILER < <(grep -E '^(e: |error: |.*error: )' "$CLEAN" | head -n 12)
 if [ "${#COMPILER[@]}" -gt 0 ]; then
   for line in "${COMPILER[@]}"; do emit "$line"; done
@@ -43,7 +55,7 @@ else
   emit "No Kotlin/Java compiler errors were printed before the failure."
 fi
 
-# 2. Gradle's own explanation, from "FAILURE:" until the stack trace starts.
+# 4. Gradle's own explanation, from "FAILURE:" until the stack trace starts.
 awk '/^FAILURE: Build failed/{flag=1} flag' "$CLEAN" \
   | awk '/^\* Exception is:/{exit} {print}' \
   | head -n 22 \
@@ -51,12 +63,16 @@ awk '/^FAILURE: Build failed/{flag=1} flag' "$CLEAN" \
       [ -n "$line" ] && emit "$line"
     done
 
-# 3. Same digest in the job summary, which is readable in the run page.
+# 5. Same digest in the job summary, which is readable in the run page.
 {
   echo "### $TITLE"
   echo
   echo '```'
-  grep -E '^(e: |error: )' "$CLEAN" | head -n 12
+  grep -E '^(e: |error: )' "$CLEAN" | head -n 8
+  echo
+  grep -E "^[A-Za-z0-9_.]+(Test|Tests)? > .*FAILED$" "$CLEAN" | head -n 10
+  echo
+  grep -E "Missing class|ERROR: R8" "$CLEAN" | head -n 14
   echo
   awk '/^FAILURE: Build failed/{flag=1} flag' "$CLEAN" | awk '/^\* Exception is:/{exit} {print}' | head -n 22
   echo '```'
