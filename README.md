@@ -46,6 +46,8 @@ re-created, and every Part 1 screen still works exactly as before.
 | Supabase is metadata-only (no Storage bucket, no R2 credentials, no key columns) | ✅ **Part 4** |
 | Storage status: verified provider usage vs recorded metadata, "not reported" instead of a fake quota | ✅ **Part 4** |
 | Worker deployment guide + API reference + 13 offline Worker tests | ✅ **Part 4** |
+| Real Gradle build + unit tests on GitHub Actions (debug APK) | ✅ **CI** |
+| Signed release APK + AAB with `android.injected.signing.*`, verified by apksigner/jarsigner | ✅ **CI** |
 
 ---
 
@@ -288,28 +290,46 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 No APK is committed to this repository (binaries do not belong in Git). If you have no local
-Android toolchain, push the project to GitHub and run the included **Build debug APK** workflow
-(`.github/workflows/build-apk.yml`, *Actions → Build debug APK → Run workflow*): it builds on a
-clean runner and uploads `app-debug.apk` as an artifact you can download and install.
+Android toolchain, push the project to GitHub and run the included **Build APKs** workflow
+(`.github/workflows/build-apk.yml`, *Actions → Build APKs → Run workflow*): it builds on a clean
+runner with JDK 17 + Android SDK 35, runs the unit tests, and uploads
+`slimex-cloud-camera-debug-apk` **and** a signed, verified
+`slimex-cloud-camera-release-signed` (APK + AAB + signature logs) as artifacts.
 
 `docs/BUILD_VERIFICATION.md` records exactly what was and was not verified while the project was
 authored, so nothing here overstates the build state.
 
-### Release APK
+### Signed release APK / AAB
 
-Create a keystore (never commit it), then sign the release build:
+No keystore and no password are in this repository. The build takes the key from the standard
+Android injected-signing properties (the same four Android Studio's *Generate Signed App Bundle or
+APK* uses), and applies it to the existing `release` build type:
 
 ```bash
-keytool -genkeypair -v -keystore slimex-release.jks -keyalg RSA \
-        -keysize 2048 -validity 10000 -alias slimex
+./gradlew assembleRelease bundleRelease \
+  -Pandroid.injected.signing.store.file="$PWD/slimex-release.jks" \
+  -Pandroid.injected.signing.store.password="…" \
+  -Pandroid.injected.signing.key.alias=slimex \
+  -Pandroid.injected.signing.key.password="…"
+# → app/build/outputs/apk/release/app-release.apk      (signed)
+# → app/build/outputs/bundle/release/app-release.aab   (signed)
 
-./gradlew :app:assembleRelease
-# R8 minifies + shrinks; rules live in app/proguard-rules.pro
-
-apksigner sign --ks slimex-release.jks \
-        --out SlimeX-Cloud-Camera-release.apk \
-        app/build/outputs/apk/release/app-release-unsigned.apk
+"$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs \
+    app/build/outputs/apk/release/app-release.apk
+jarsigner -verify app/build/outputs/bundle/release/app-release.aab    # → "jar verified"
 ```
+
+Without those properties the release build deliberately produces `app-release-unsigned.apk`
+instead of signing with a placeholder key.
+
+**In CI** the workflow job *assembleRelease + bundleRelease (signed and verified)* takes the same
+four values from the repository secrets `RELEASE_KEYSTORE_BASE64`, `RELEASE_KEYSTORE_PASSWORD`,
+`RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`, then verifies both artifacts: `apksigner` on the APK,
+`jarsigner` on the AAB, `zipalign`, and a check that the APK signer's certificate SHA-256 equals the
+injected keystore's certificate. Without those secrets it still runs with a throwaway key generated
+inside the runner, so the signing path is proven but the output is not distributable.
+
+See [`docs/BUILD_VERIFICATION.md`](docs/BUILD_VERIFICATION.md) for the recorded CI run.
 
 > Primary target device: Realme C31 (Android 12 / API 31, entry-level SoC). Video asks for
 > 1080p and steps down automatically, the preview uses `PreviewView.ImplementationMode.COMPATIBLE`,

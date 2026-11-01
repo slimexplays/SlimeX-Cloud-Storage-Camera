@@ -107,38 +107,87 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ### Without a local toolchain
 
 The repository includes `.github/workflows/build-apk.yml`. Push your fork to GitHub, open
-**Actions → Build debug APK → Run workflow**, and download the `slimex-cloud-camera-debug-apk`
-artifact when it finishes. The workflow also runs `./gradlew :app:testDebugUnitTest`.
+**Actions → Build APKs → Run workflow**, and download either artifact when it finishes:
+
+- `slimex-cloud-camera-debug-apk` — the debug APK (the workflow also runs
+  `./gradlew :app:testDebugUnitTest`);
+- `slimex-cloud-camera-release-signed` — a **signed** release APK and AAB plus the
+  `apksigner` / `jarsigner` verification output (see §5 for the signing secrets).
 
 ---
 
-## 5. Build a release APK
+## 5. Build a signed release APK / AAB
 
-Create a keystore **once** and keep it out of Git:
+The project **never contains a keystore or a password**. `app/build.gradle.kts` picks the key up
+from the standard Android *injected signing* properties — the same mechanism Android Studio's
+**Build → Generate Signed App Bundle or APK…** uses:
+
+```
+android.injected.signing.store.file
+android.injected.signing.store.password
+android.injected.signing.key.alias
+android.injected.signing.key.password
+```
+
+When all four are supplied **and** the keystore file exists, a `release` signing config is created
+and applied to the `release` build type, so both build tasks produce signed artifacts:
+
+| Task | Output |
+| --- | --- |
+| `assembleRelease` | `app/build/outputs/apk/release/app-release.apk` (signed) |
+| `bundleRelease` | `app/build/outputs/bundle/release/app-release.aab` (signed) |
+
+Without the properties nothing is signed with a placeholder: the release build then writes
+`app-release-unsigned.apk`, which is how you can tell the key was not injected.
+
+### Locally
 
 ```bash
+# once — keep slimex-release.jks OUT of the repository (.gitignore already covers *.jks)
 keytool -genkeypair -v -keystore slimex-release.jks -keyalg RSA -keysize 2048 \
         -validity 10000 -alias slimex
+
+./gradlew assembleRelease bundleRelease \
+  -Pandroid.injected.signing.store.file="$PWD/slimex-release.jks" \
+  -Pandroid.injected.signing.store.password="…" \
+  -Pandroid.injected.signing.key.alias=slimex \
+  -Pandroid.injected.signing.key.password="…"
+
+# verify what you just built
+"$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs \
+    app/build/outputs/apk/release/app-release.apk
+jarsigner -verify app/build/outputs/bundle/release/app-release.aab   # → "jar verified"
 ```
 
-Then either sign through Android Studio (**Build → Generate Signed Bundle/APK → APK**, choose the
-keystore, `release` build type) or from the command line:
+Or use Android Studio: **Build → Generate Signed App Bundle or APK → APK / Android App Bundle**,
+pick the keystore and the `release` variant. The IDE passes exactly those four properties.
 
-```bash
-./gradlew :app:assembleRelease
-# → app/build/outputs/apk/release/app-release-unsigned.apk
+### In GitHub Actions
 
-"$ANDROID_HOME/build-tools/35.0.0/zipalign" -v -p 4 \
-    app/build/outputs/apk/release/app-release-unsigned.apk slimex-aligned.apk
+`.github/workflows/build-apk.yml` (job *assembleRelease + bundleRelease (signed and verified)*)
+does the same with repository secrets:
 
-"$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
-    --ks slimex-release.jks --out SlimeX-Cloud-Camera-1.0.0.apk slimex-aligned.apk
+| Secret | Value |
+| --- | --- |
+| `RELEASE_KEYSTORE_BASE64` | `base64 -w0 slimex-release.jks` |
+| `RELEASE_KEYSTORE_PASSWORD` | store password |
+| `RELEASE_KEY_ALIAS` | key alias (`slimex`) |
+| `RELEASE_KEY_PASSWORD` | key password (optional, defaults to the store password) |
 
-"$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs SlimeX-Cloud-Camera-1.0.0.apk
-```
+Add them under **Settings → Secrets and variables → Actions**. If they are missing the job still
+runs, but with a **throwaway** key generated inside the runner — useful to prove the pipeline, not
+usable for a release you distribute.
 
-R8 runs on release builds with the rules in `app/proguard-rules.pro` (kotlinx.serialization,
-Hilt, CameraX and WorkManager keep rules are already there).
+The job fails unless **all** of these hold:
+
+- `app-release.apk` exists and `app-release-unsigned.apk` does **not**;
+- `apksigner verify --print-certs` accepts the APK;
+- `zipalign -c -v 4` passes;
+- `jarsigner -verify` prints `jar verified` for the AAB;
+- the APK signer's certificate SHA-256 equals the certificate of the keystore that was injected.
+
+R8 runs on release builds with the rules in `app/proguard-rules.pro` (kotlinx.serialization, Hilt,
+CameraX, WorkManager and the Tink/Error-Prone `-dontwarn` rules).
 
 > **Version bumping:** `versionCode` / `versionName` live in `app/build.gradle.kts`.
 

@@ -7,14 +7,19 @@ Honest list of what this build does **not** do, so nothing in the spec is over-c
 ## Build / distribution
 
 1. **No APK is committed to this repository.** Binaries do not belong in Git. Build it with
-   `./gradlew :app:assembleDebug` or run the included GitHub Actions workflow
-   (`.github/workflows/build-apk.yml`), which publishes `app-debug.apk` as an artifact.
-2. **The project was authored without an Android SDK/JDK available to the authoring environment**,
-   so `./gradlew assembleDebug` was not executed there. What *was* verified statically is listed in
-   [`BUILD_VERIFICATION.md`](BUILD_VERIFICATION.md). Treat the first local build as the moment to
-   fix anything the static review could not catch, and please report it rather than assuming a
-   silent success.
-3. No release signing config is committed (by design): create your own keystore.
+   `./gradlew :app:assembleDebug`, or download it from the GitHub Actions workflow
+   (`.github/workflows/build-apk.yml`), which publishes `slimex-cloud-camera-debug-apk` and a
+   signed `slimex-cloud-camera-release-signed` artifact.
+2. **The build runs on GitHub Actions, not in the authoring sandbox** (no JDK/Android SDK there).
+   It compiles, passes the unit tests, and produces a debug APK plus a signed release APK/AAB; the
+   recorded run is in [`BUILD_VERIFICATION.md`](BUILD_VERIFICATION.md). That first real compile
+   found and fixed ten defects (wrong parameter names, a missing `override`, an R8 missing-class
+   error, a failing unit test …), which is exactly why no build was claimed before it ran.
+3. **No keystore or password is committed (by design).** Release signing comes from the injected
+   `android.injected.signing.*` properties; in CI they come from four repository secrets. When the
+   secrets are absent the workflow signs with a throwaway key generated inside the runner — fine for
+   proving the pipeline, not for distribution, and it cannot upgrade an install signed with your
+   real key.
 
 ## Cryptography
 

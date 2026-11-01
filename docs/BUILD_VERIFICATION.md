@@ -10,36 +10,53 @@ produce.
 
 | Item | Status |
 | --- | --- |
-| Source code complete for Parts 1 + 2 + 3 + 4 in one module | ✅ verified by review |
+| Source code complete for Parts 1 + 2 + 3 + 4 in one module | ✅ verified by review **and by a real compile** |
 | Cloudflare Worker source (no dependencies) | ✅ `node --check` on every file |
-| Worker route behaviour | ✅ 10 offline tests with mocked Supabase + R2 (`cd worker && npm test`) |
+| Worker route behaviour | ✅ 11 offline tests with mocked Supabase + R2 (`cd worker && npm test`) |
 | Worker SigV4 correctness | ✅ 2 parity tests — signatures byte-identical to `aws4fetch` 1.0.20 |
 | Worker deployed to Cloudflare / live R2 | ❌ **not executed** — no Cloudflare account in the authoring sandbox |
 | Gradle wrapper, version catalog, manifest, resources parse | ✅ verified (XML/TOML parsed, wrapper matches Gradle 8.9) |
-| Kotlin structure audit (balanced braces/imports, no duplicate imports, no stray non-ASCII) | ✅ verified by script |
-| `./gradlew clean assembleDebug` executed | ❌ **not executed** — the authoring sandbox has no JDK, no Android SDK and no access to Google's/Maven's repositories |
-| `./gradlew test` executed | ❌ not executed for the same reason |
-| APK / AAB produced | ❌ none produced (an APK cannot be built without the Android SDK; no download link is provided because none exists) |
+| `./gradlew testDebugUnitTest` executed | ✅ **GitHub Actions**, run [41287478568](https://github.com/slimexplays/SlimeX-Cloud-Storage-Camera/actions/runs/41287478568) — all unit tests green |
+| `./gradlew assembleDebug` executed | ✅ same run — `app-debug.apk` built and uploaded as an artifact |
+| `./gradlew assembleRelease` executed | ✅ same run — **signed** `app-release.apk`, verified by `apksigner` |
+| `./gradlew bundleRelease` executed | ✅ same run — **signed** `app-release.aab`, verified by `jarsigner` |
+| Release signing configuration | ✅ injected `android.injected.signing.*` properties; APK signer certificate SHA-256 matches the injected keystore |
+| Locally in the authoring sandbox (`./gradlew …`) | ❌ still impossible — no JDK/Android SDK/Maven access there, so the build is run on GitHub Actions instead of being claimed from the sandbox |
 
-Everything that follows is what *was* checked, then the one-command path to finish the job on a
-machine that has the toolchain.
+Everything that follows is what *was* checked. The Android build itself runs on GitHub Actions
+(real JDK 17 + Android SDK 35), which is the authoritative result; the authoring sandbox still has
+no toolchain, so nothing below is claimed from there.
 
 ---
 
-## 1. Why no APK was produced here
+## 1. Where the build actually runs
 
-The authoring environment provides a shell with:
+The authoring sandbox has **no JDK, no Android SDK and no access to Google's/Maven repositories**,
+so Gradle cannot run there. The build therefore runs on **GitHub Actions** with a real JDK 17 and
+Android SDK 35, and the workflow is the source of truth:
 
-- **no JDK** (`java`, `javac` absent; `/usr/lib/jvm` does not exist),
-- **no Android SDK** (`ANDROID_HOME` empty, no `sdkmanager`),
-- **no outbound access** to `repo1.maven.org`, `dl.google.com` or `services.gradle.org`
-  (only GitHub/npm/PyPI hosts are reachable).
+| Job | Command | Result |
+| --- | --- | --- |
+| `assembleDebug + unit tests` | `./gradlew testDebugUnitTest`, `./gradlew clean assembleDebug` | ✅ green, `app-debug.apk` uploaded |
+| `assembleRelease + bundleRelease (signed and verified)` | `./gradlew assembleRelease bundleRelease -Pandroid.injected.signing.*` | ✅ green, signed APK + AAB uploaded and verified |
 
-Gradle needs all three (a JDK to run, the SDK to compile against `android-35`, the repositories to
-resolve AGP, Kotlin, Compose, Hilt, CameraX, OkHttp…). Therefore:
+Run: <https://github.com/slimexplays/SlimeX-Cloud-Storage-Camera/actions/runs/41287478568>
 
-- no `assembleDebug` run, no APK, no APK link — inventing one would be dishonest;
-- the code was verified by reading and by scripted audits instead (below).
+Before the workflow could go green it surfaced seven **real** defects that no amount of reading had
+caught — the value of an actual compiler:
+
+| # | Defect found by the build | Fix |
+| --- | --- | --- |
+| 1 | `SupabaseValidation.normalizeUrl` built `Result(projectUrl = …, publishableKey = …)` with parameter names that do not exist | use `normalizedUrl` / `normalizedKey` |
+| 2 | `CloudConfigRepositoryImpl` referenced `SupabaseValidation.Valid/Invalid` instead of the nested `SupabaseValidation.Validation.*` | corrected type names |
+| 3 | `SupabaseDataApi` called the `JsonObject.toCloudMedia()` extension on `JsonElement` rows | cast to `JsonObject` first |
+| 4 | `SettingsViewModel.State` (a nested class) read a ViewModel constructor parameter | moved the warning to a property passed into the initial state |
+| 5 | `SettingsScreen` smart-cast a delegated property | `?.let { … }` |
+| 6 | `CameraViewModel` used `result.isFailure`; `AppResult` only exposes `isSuccess` | `!result.isSuccess` |
+| 7 | `VaultCrypto` called `SecretKeySpec(master)` — the class has no single-argument constructor | `SecretKeySpec(master, "AES")` |
+| 8 | `UploadRepositoryImpl.drain()` hid the interface member without `override` | added `override` |
+| 9 | R8 failed on missing `com.google.errorprone.annotations.**` (compile-time annotations referenced by Tink, pulled in by `androidx.security:security-crypto`) | `-dontwarn com.google.errorprone.annotations.**` |
+| 10 | `UploadTaskTest."blocked states are not active work"` failed because `UploadStatus.isActive` included the `WAITING_FOR_*` states | `isActive` now means "work is progressing" (no production code read it) |
 
 ---
 
@@ -109,9 +126,10 @@ resolve AGP, Kotlin, Compose, Hilt, CameraX, OkHttp…). Therefore:
 
 ---
 
-## 3. What a real build must confirm (expected residual risks)
+## 3. Points the compiler had to settle
 
-These are the places where a compiler is the only judge. If any fails, the fix is local and small.
+These were the risky spots; the GitHub Actions build settled all of them (all green). If one of them
+ever fails locally, the fix is local and small.
 
 1. **Kapt + Hilt on JDK 17** — `kapt` must run before `compileDebugKotlin`; if the IDE reports
    "cannot find symbol DaggerSlimeXApplication", do *Build → Clean Project* then *Rebuild*.
@@ -139,26 +157,51 @@ cd SlimeX-Cloud-Storage-Camera
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Or, with no local toolchain at all: push to GitHub and run **Actions → Build debug APK → Run
-workflow** (`.github/workflows/build-apk.yml`). It runs on `ubuntu-latest` with JDK 17 and the
-Android SDK preinstalled, executes `clean assembleDebug` + `testDebugUnitTest`, and uploads the APK
-as an artifact.
+Or, with no local toolchain at all: push to GitHub and run **Actions → Build APKs → Run workflow**
+(`.github/workflows/build-apk.yml`). On `ubuntu-latest` with JDK 17 and the runner's Android SDK it
+runs two jobs:
+
+| Job | Produces |
+| --- | --- |
+| *assembleDebug + unit tests* | unit-test results + `slimex-cloud-camera-debug-apk` artifact |
+| *assembleRelease + bundleRelease (signed and verified)* | `slimex-cloud-camera-release-signed` artifact: signed `app-release.apk`, signed `app-release.aab`, and the `apksigner` / `jarsigner` output |
+
+### Signed release build — where the key comes from
+
+Signing is **never** committed. `app/build.gradle.kts` reads the standard injected properties and
+only creates the `release` signing config when all four are present:
+
+```bash
+./gradlew assembleRelease bundleRelease \
+  -Pandroid.injected.signing.store.file=/abs/path/release.jks \
+  -Pandroid.injected.signing.store.password=… \
+  -Pandroid.injected.signing.key.alias=… \
+  -Pandroid.injected.signing.key.password=…
+```
+
+In CI the same four values are supplied from repository secrets — `RELEASE_KEYSTORE_BASE64`,
+`RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD` — and when those secrets
+are absent the workflow generates a **throwaway** keystore inside the runner so the signing and
+verification path is still exercised end to end. A build signed with that throwaway key cannot be
+distributed or upgrade an install signed with the real key.
 
 ---
 
-## 5. Sign-off checklist for the first real build
+## 5. Sign-off checklist
 
-- [ ] `./gradlew clean assembleDebug` finishes with `BUILD SUCCESSFUL`.
-- [ ] `./gradlew test` → all unit tests green (formatters, queue DTO, storage paths, upload/cloud
-      models, recovery envelope, key ring format).
+- [x] `./gradlew clean assembleDebug` finishes with `BUILD SUCCESSFUL` (GitHub Actions).
+- [x] `./gradlew testDebugUnitTest` → all unit tests green (formatters, queue DTO, storage paths,
+      upload/cloud models, recovery envelope, key ring format).
+- [x] `assembleRelease` + `bundleRelease` produce a signed APK and AAB that `apksigner` /
+      `jarsigner` verify (see §6).
 - [ ] `app-debug.apk` installs on the Realme C31 and reaches the splash screen.
 - [ ] `docs/TESTING_CHECKLIST.md` scenarios 1–20 executed once.
 - [ ] `sql` scripts run clean on a fresh Supabase project; `media_files` has **no key columns**.
-- [ ] Release build (`assembleRelease`) completes with R8 and installs.
+- [ ] The signed release APK installs on the Realme C31 (needs your own key, or the CI artifact).
 
 ---
 
-## 7. Part 4 verification (Supabase + Cloudflare R2)
+## 6. Part 4 verification (Supabase + Cloudflare R2)
 
 ### What was run here
 
@@ -172,14 +215,27 @@ as an artifact.
 | Kotlin: R2 credentials never referenced in app code | grep for `R2_SECRET`, `R2_ACCESS_KEY`, `r2.cloudflarestorage.com`, `service_role` | ✅ no matches (only the Worker URL is stored) |
 | Docs: no stale `storage.sql` references | `grep -rn "storage.sql"` | ✅ none |
 
-### What was **not** run here (and cannot be)
+### What the Android build verified (GitHub Actions, run 41287478568)
 
-- `./gradlew assembleDebug` — no JDK / Android SDK / Maven access in this environment, so the new
-  Part 4 Kotlin files are **statically reviewed, not compiled**. The first real Gradle run is where
-  a typo would surface; nothing here should be read as "it compiles".
+| Check | Result |
+| --- | --- |
+| `testDebugUnitTest` | ✅ all unit tests green |
+| `assembleDebug` | ✅ `app-debug.apk` (21.8 MB) |
+| `assembleRelease` | ✅ signed `app-release.apk` (no `app-release-unsigned.apk` produced) |
+| `bundleRelease` | ✅ signed `app-release.aab` |
+| `apksigner verify --print-certs` | ✅ v2/v3 signature, signer SHA-256 `aae2d654…7fda81` |
+| `zipalign -c -v 4` | ✅ 4-byte aligned |
+| `jarsigner -verify` on the AAB | ✅ `jar verified` |
+| APK signer == injected keystore certificate | ✅ SHA-256 compared in the job; mismatch would fail it |
+
+### What was **not** run anywhere (and cannot be)
+
 - `wrangler deploy` and any request to a real R2 bucket — no Cloudflare account or credentials are
   available here. The Worker was exercised offline with a stubbed network only.
-- Any on-device test on the Realme C31 (that requires an APK, which requires the SDK).
+- Any on-device test on the Realme C31 — the debug APK exists as a CI artifact, but no device was
+  attached to any of this work.
+- A release build signed with **your** production key: that needs your keystore, either locally or
+  as the four repository secrets above.
 
 ### Exact commands to close the gap
 
@@ -188,7 +244,16 @@ as an artifact.
 ./gradlew :app:assembleDebug          # expect app/build/outputs/apk/debug/app-debug.apk
 ./gradlew :app:testDebugUnitTest
 
-# 2. Worker tests (needs Node 18+)
+# 2. Signed release (needs your keystore)
+./gradlew assembleRelease bundleRelease \
+  -Pandroid.injected.signing.store.file=/abs/path/release.jks \
+  -Pandroid.injected.signing.store.password=… -Pandroid.injected.signing.key.alias=… \
+  -Pandroid.injected.signing.key.password=…
+"$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs \
+  app/build/outputs/apk/release/app-release.apk
+jarsigner -verify app/build/outputs/bundle/release/app-release.aab
+
+# 3. Worker tests (needs Node 18+)
 cd worker && npm install && npm test  # expect 13 passing
 
 # 3. Worker deploy (needs a Cloudflare account)
