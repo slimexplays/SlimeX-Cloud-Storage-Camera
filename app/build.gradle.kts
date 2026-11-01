@@ -7,6 +7,41 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// ---------------------------------------------------------------------------------------------
+// Release signing
+// ---------------------------------------------------------------------------------------------
+// The keystore is NEVER committed and no password ever lives in this file or in gradle.properties.
+// Whatever builds a release supplies the key at build time through the standard Android
+// "injected signing" properties — the same mechanism Android Studio's
+// *Build > Generate Signed App Bundle or APK* uses, and what .github/workflows/build-apk.yml
+// passes from repository secrets:
+//
+//   -Pandroid.injected.signing.store.file=<absolute path to the .jks/.keystore>
+//   -Pandroid.injected.signing.store.password=<store password>
+//   -Pandroid.injected.signing.key.alias=<key alias>
+//   -Pandroid.injected.signing.key.password=<key password>
+//
+// When all four are present a "release" signing config is created and applied to the `release`
+// build type, so `assembleRelease` writes app-release.apk and `bundleRelease` writes
+// app-release.aab, both signed. When they are absent (a debug build, or a release build on a
+// machine without the key) no release signing config is created at all: the build produces
+// app-release-unsigned.apk instead of silently signing with a placeholder.
+val injectedStoreFile = providers.gradleProperty("android.injected.signing.store.file").orNull
+    ?.trim()?.takeIf { it.isNotEmpty() }
+val injectedStorePassword = providers.gradleProperty("android.injected.signing.store.password").orNull
+    ?.takeIf { it.isNotEmpty() }
+val injectedKeyAlias = providers.gradleProperty("android.injected.signing.key.alias").orNull
+    ?.trim()?.takeIf { it.isNotEmpty() }
+val injectedKeyPassword = providers.gradleProperty("android.injected.signing.key.password").orNull
+    ?.takeIf { it.isNotEmpty() }
+
+// The keystore must also exist: a mistyped path is a configuration error, not a silent skip.
+val hasInjectedSigning = injectedStoreFile != null &&
+    injectedStorePassword != null &&
+    injectedKeyAlias != null &&
+    injectedKeyPassword != null &&
+    file(injectedStoreFile).isFile
+
 android {
     namespace = "com.slimex.cloudcamera"
     compileSdk = 35
@@ -22,6 +57,19 @@ android {
         vectorDrawables { useSupportLibrary = true }
     }
 
+    signingConfigs {
+        if (hasInjectedSigning) {
+            create("release") {
+                storeFile = file(injectedStoreFile!!)
+                storePassword = injectedStorePassword
+                keyAlias = injectedKeyAlias
+                keyPassword = injectedKeyPassword
+                // AGP defaults are kept: v2 + v3 APK signatures (and the JAR signature that a
+                // bundle needs), which is exactly what apksigner verifies in CI.
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
@@ -34,8 +82,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // NOTE: no signing config is committed. Create your own keystore
-            // (see README "Building a release APK") before publishing.
+            // No keystore is committed: the signature comes from the injected properties above,
+            // which the GitHub Actions release job supplies from repository secrets.
+            if (hasInjectedSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
