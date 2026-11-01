@@ -32,11 +32,13 @@ class SettingsViewModel @Inject constructor(
         val settings: AppSettings = AppSettings(),
         val cloudStatus: CloudSetupStatus = CloudSetupStatus.Loading,
         val r2Status: R2SetupStatus = R2SetupStatus.Loading,
-        val secureStorageWarning: String? = secureStore.storageWarning,
+        val secureStorageWarning: String? = null,
         val signedInEmail: String? = null,
     )
 
-    private val _state = MutableStateFlow(State())
+    private val storageWarning: String? = secureStore.storageWarning
+
+    private val _state = MutableStateFlow(State(secureStorageWarning = storageWarning))
     val state: StateFlow<State> = _state.asStateFlow()
 
     init {

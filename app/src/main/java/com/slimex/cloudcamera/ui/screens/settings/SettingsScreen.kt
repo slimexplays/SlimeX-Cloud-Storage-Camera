@@ -97,10 +97,10 @@ fun SettingsScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
-            if (state.secureStorageWarning != null) {
+            state.secureStorageWarning?.let { warning ->
                 item {
                     InlineBanner(
-                        text = state.secureStorageWarning,
+                        text = warning,
                         tone = PillTone.AMBER,
                         icon = Icons.Rounded.Lock,
                     )

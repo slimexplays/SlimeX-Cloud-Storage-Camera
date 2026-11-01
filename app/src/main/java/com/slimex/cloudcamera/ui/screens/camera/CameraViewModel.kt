@@ -268,7 +268,7 @@ class CameraViewModel @Inject constructor(
 
             val noun = if (kind == MediaKind.PHOTO) "Photo" else "Video"
             val text = when {
-                result.isFailure -> "$noun saved privately · ${result.errorOrNull()?.message.orEmpty()}"
+                !result.isSuccess -> "$noun saved privately · ${result.errorOrNull()?.message.orEmpty()}"
                 !configured -> "$noun encrypted · set up Supabase to upload"
                 !settings.autoUpload -> "$noun encrypted · uploads are paused in Settings"
                 else -> "$noun encrypted · upload queued"

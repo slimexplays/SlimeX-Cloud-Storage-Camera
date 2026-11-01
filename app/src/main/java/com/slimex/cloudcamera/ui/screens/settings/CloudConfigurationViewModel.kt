@@ -80,6 +80,7 @@ class CloudConfigurationViewModel @Inject constructor(
         val configured: Boolean = false,
         val workerReachable: Boolean? = null,
         val bucketReady: Boolean? = null,
+        val maxUploadBytes: Long? = null,
         val verified: ProviderUsage? = null,
         val metadata: RemoteUsage? = null,
         val freeQuotaBytes: Long? = null,

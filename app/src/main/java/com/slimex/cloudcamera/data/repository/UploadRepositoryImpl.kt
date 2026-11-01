@@ -190,7 +190,7 @@ class UploadRepositoryImpl @Inject constructor(
     }
 
     /** Used by the WorkManager worker; processes everything that can be processed right now. */
-    suspend fun drain(): Int {
+    override suspend fun drain(): Int {
         awaitLoaded()
         val settings = settingsRepository.current()
         if (!settings.autoUpload) return 0

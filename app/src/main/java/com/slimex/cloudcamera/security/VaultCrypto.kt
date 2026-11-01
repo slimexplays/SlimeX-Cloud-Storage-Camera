@@ -73,7 +73,7 @@ class KeystoreVaultCrypto @Inject constructor(
         return try {
             val nonce = nextNonce()
             val cipher = Cipher.getInstance(TRANSFORMATION).apply {
-                init(Cipher.ENCRYPT_MODE, SecretKeySpec(master), GCMParameterSpec(TAG_BITS, nonce))
+                init(Cipher.ENCRYPT_MODE, SecretKeySpec(master, "AES"), GCMParameterSpec(TAG_BITS, nonce))
                 updateAAD(AAD)
             }
             AppResult.Success(nonce + cipher.doFinal(plaintext))
@@ -94,7 +94,7 @@ class KeystoreVaultCrypto @Inject constructor(
             val nonce = sealed.copyOfRange(0, NONCE_BYTES)
             val body = sealed.copyOfRange(NONCE_BYTES, sealed.size)
             val cipher = Cipher.getInstance(TRANSFORMATION).apply {
-                init(Cipher.DECRYPT_MODE, SecretKeySpec(master), GCMParameterSpec(TAG_BITS, nonce))
+                init(Cipher.DECRYPT_MODE, SecretKeySpec(master, "AES"), GCMParameterSpec(TAG_BITS, nonce))
                 updateAAD(AAD)
             }
             AppResult.Success(cipher.doFinal(body))
