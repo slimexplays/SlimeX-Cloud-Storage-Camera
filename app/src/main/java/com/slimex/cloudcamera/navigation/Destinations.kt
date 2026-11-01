@@ -25,6 +25,7 @@ object Destinations {
     const val CLOUD_SETUP = "settings/cloud"
     const val ACCOUNT = "account"
     const val CAMERA_PREFERENCES = "settings/camera"
+    const val SECURITY = "settings/security"
     const val ABOUT = "settings/about"
 }
 

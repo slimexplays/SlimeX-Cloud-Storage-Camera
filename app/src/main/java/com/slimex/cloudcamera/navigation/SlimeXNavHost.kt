@@ -19,6 +19,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.slimex.cloudcamera.ui.components.SlimeXBottomBar
 import com.slimex.cloudcamera.ui.screens.about.AboutScreen
+import com.slimex.cloudcamera.ui.screens.security.EncryptionRecoveryScreen
 import com.slimex.cloudcamera.ui.screens.auth.AuthScreen
 import com.slimex.cloudcamera.ui.screens.camera.CameraScreen
 import com.slimex.cloudcamera.ui.screens.gallery.CloudGalleryScreen
@@ -148,6 +149,14 @@ fun SlimeXNavHost(
                     onOpenAbout = { navController.navigate(Destinations.ABOUT) { launchSingleTop = true } },
                     onOpenStorage = { navController.navigateToTab(Destinations.STORAGE) },
                     onOpenAccount = { navController.navigate(Destinations.ACCOUNT) { launchSingleTop = true } },
+                    onOpenSecurity = { navController.navigate(Destinations.SECURITY) { launchSingleTop = true } },
+                )
+            }
+
+            composable(Destinations.SECURITY) {
+                EncryptionRecoveryScreen(
+                    contentPadding = innerPadding,
+                    onBack = { navController.popBackStack() },
                 )
             }
 

@@ -3,11 +3,11 @@ package com.slimex.cloudcamera.media
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
-import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.slimex.cloudcamera.core.constants.AppConstants
 import com.slimex.cloudcamera.core.result.AppFailure
 import com.slimex.cloudcamera.core.result.AppResult
+import com.slimex.cloudcamera.core.util.SecureLog
 import com.slimex.cloudcamera.domain.model.MediaKind
 import com.slimex.cloudcamera.storage.StagingStore
 import kotlinx.coroutines.Dispatchers
@@ -42,7 +42,7 @@ class ThumbnailFactory @Inject constructor(
         return when (val result = create(source, kind, target)) {
             is AppResult.Success -> result.data
             is AppResult.Failure -> {
-                Log.w(TAG, "Thumbnail failed: ${result.error.message}")
+                SecureLog.w(TAG, "Thumbnail failed: ${result.error.message}")
                 null
             }
         }

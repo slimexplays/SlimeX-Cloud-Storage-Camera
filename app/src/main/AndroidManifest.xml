@@ -37,6 +37,7 @@
         android:largeHeap="false"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
         android:theme="@style/Theme.SlimeX.Starting"
         tools:targetApi="31">
 

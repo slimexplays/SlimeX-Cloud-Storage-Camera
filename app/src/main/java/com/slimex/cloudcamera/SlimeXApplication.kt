@@ -16,7 +16,8 @@ class SlimeXApplication : Application(), Configuration.Provider {
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
-            .setMinimumLoggingLevel(Log.INFO)
+            // Release builds keep WorkManager quiet so no payload detail reaches logcat.
+            .setMinimumLoggingLevel(if (BuildConfig.DEBUG) Log.INFO else Log.ERROR)
             .build()
 
     override fun onCreate() {

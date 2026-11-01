@@ -83,6 +83,8 @@ fun AboutScreen(
                     InfoRow(label = "Developer", value = "Slime Plays")
                     InfoRow(label = "Camera engine", value = "CameraX")
                     InfoRow(label = "Cloud backend", value = "Supabase (your own project)")
+                    InfoRow(label = "Encryption", value = "AES-256-GCM, 256-bit keys")
+                    InfoRow(label = "Key storage", value = "Android Keystore key vault")
                     InfoRow(label = "Minimum Android", value = "8.0 (API 26)")
                 }
             }
@@ -123,10 +125,31 @@ fun AboutScreen(
             }
 
             item {
+                SectionHeader(title = "Security")
+                Spacer(modifier = Modifier.height(Spacing.sm))
+                SlimeCard {
+                    Text(
+                        text = "• Every capture is encrypted on this device before it is uploaded.\n" +
+                            "• Encryption keys never leave the phone; they are sealed with a key that " +
+                            "lives inside the Android Keystore.\n" +
+                            "• The Supabase bucket is private and protected by per-user row and object " +
+                            "policies.\n" +
+                            "• Sharing goes through the system Sharesheet with a read-only content URI — " +
+                            "no public links are created.\n" +
+                            "• Release builds log nothing sensitive, and no analytics or telemetry is " +
+                            "included.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                    )
+                }
+            }
+
+            item {
                 SlimeCard {
                     Text(
                         text = "Credentials live in Keystore-encrypted storage on this device and can " +
-                            "be removed at any time from the Supabase setup screen.",
+                            "be removed at any time from the Supabase setup screen. Your recovery code " +
+                            "is the only way back into an existing library after a reinstall.",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                     )

@@ -72,6 +72,11 @@ class StagingStore @Inject constructor(
     fun scratchFile(prefix: String): File =
         File(workDir(), "${prefix}_${System.currentTimeMillis()}.tmp")
 
+    /** Available bytes on the volume that stores captures (Long.MAX_VALUE if unknown). */
+    fun freeBytes(): Long =
+        runCatching { StatFs(context.filesDir.absolutePath) }.getOrNull()?.availableBytes
+            ?: Long.MAX_VALUE
+
     // ---------------------------------------------------------------- listing
 
     fun listPending(): List<LocalMedia> =

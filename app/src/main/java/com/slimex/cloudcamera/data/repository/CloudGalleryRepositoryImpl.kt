@@ -14,6 +14,7 @@ import com.slimex.cloudcamera.domain.repository.CloudGalleryRepository
 import com.slimex.cloudcamera.media.ThumbnailFactory
 import com.slimex.cloudcamera.security.MediaCrypto
 import com.slimex.cloudcamera.security.MediaKey
+import com.slimex.cloudcamera.security.MediaKeyStore
 import com.slimex.cloudcamera.storage.StagingStore
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -28,6 +29,7 @@ class CloudGalleryRepositoryImpl @Inject constructor(
     private val crypto: MediaCrypto,
     private val staging: StagingStore,
     private val thumbnails: ThumbnailFactory,
+    private val keyStore: MediaKeyStore,
     private val dispatchers: DispatchersProvider,
 ) : CloudGalleryRepository {
 
@@ -85,6 +87,8 @@ class CloudGalleryRepositoryImpl @Inject constructor(
             runCatching { staging.viewerFile(media.id, media.mediaType).delete() }
             runCatching { staging.shareFile(media.id, media.mediaType).delete() }
         }
+        // The row is gone, so its local key entry would only be dead weight.
+        keyStore.remove(media.id)
         return AppResult.Success(Unit)
     }
 
@@ -93,8 +97,9 @@ class CloudGalleryRepositoryImpl @Inject constructor(
         if (cached.exists() && cached.length() > 0) return AppResult.Success(cached)
 
         val thumbPath = media.thumbnailPath?.takeIf { it.isNotBlank() }
-        val key = media.thumbnailKey
-        val nonce = media.thumbnailNonce
+        val entry = keyStore.get(media.id)
+        val key = entry?.tk
+        val nonce = entry?.tn
 
         if (thumbPath != null && key != null && nonce != null) {
             val context = when (val result = cloud.require()) {
@@ -143,11 +148,17 @@ class CloudGalleryRepositoryImpl @Inject constructor(
                 AppFailure.storage("This file was stored unencrypted, so it cannot be opened safely."),
             )
         }
-        val key = media.encryptionKey
-        val nonce = media.encryptionNonce
-        if (key.isNullOrBlank() || nonce.isNullOrBlank()) {
-            return AppResult.Failure(AppFailure.storage("The decryption key for this file is missing."))
+        val entry = keyStore.get(media.id)
+        if (entry == null || !entry.isComplete) {
+            return AppResult.Failure(
+                AppFailure.storage(
+                    "The encryption key for this file is not on this device. Restore your recovery " +
+                        "code from Settings > Encryption & Recovery to open it again.",
+                ),
+            )
         }
+        val key = entry.k
+        val nonce = entry.n
 
         val scratch = staging.scratchFile("download")
         val downloaded = storage.download(
@@ -166,7 +177,13 @@ class CloudGalleryRepositoryImpl @Inject constructor(
             is AppResult.Success -> result.data
             is AppResult.Failure -> {
                 runCatching { scratch.delete() }
-                return result
+                return AppResult.Failure(
+                    AppFailure.storage(
+                        "The cloud copy could not be decrypted. It may be corrupt, or this key ring " +
+                            "does not belong to it.",
+                        result.error.cause,
+                    ),
+                )
             }
         }
         runCatching { scratch.delete() }

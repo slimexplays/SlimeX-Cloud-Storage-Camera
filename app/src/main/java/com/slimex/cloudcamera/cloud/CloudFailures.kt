@@ -27,7 +27,9 @@ internal object CloudFailures {
             )
             404 -> AppFailure.unknown(server ?: "Object or bucket not found while trying to $action.")
             409 -> AppFailure.unknown(server ?: "An object with that name already exists.")
-            413 -> AppFailure.unknown(server ?: "The file is larger than the bucket's size limit.")
+            402, 413 -> AppFailure.storage(
+                server ?: "Your Supabase storage quota or size limit was reached while trying to $action.",
+            )
             else -> AppFailure.unknown(server ?: "Could not $action (HTTP ${outcome.code}).")
         }
     }

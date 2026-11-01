@@ -12,13 +12,11 @@ data class CloudMedia(
     val encrypted: Boolean,
     val checksum: String?,
     val createdAtMillis: Long,
-    /** AES-256-GCM key/nonce for the object, readable only by the owner through RLS. */
-    val encryptionKey: String? = null,
-    val encryptionNonce: String? = null,
-    /** Optional encrypted sidecar thumbnail so the gallery never downloads full media. */
+    /**
+     * Optional encrypted sidecar thumbnail so the gallery never downloads full media.
+     * The matching AES-256-GCM key lives in the local key ring, never in this row.
+     */
     val thumbnailPath: String? = null,
-    val thumbnailKey: String? = null,
-    val thumbnailNonce: String? = null,
 ) {
     val hasThumbnail: Boolean get() = !thumbnailPath.isNullOrBlank()
 

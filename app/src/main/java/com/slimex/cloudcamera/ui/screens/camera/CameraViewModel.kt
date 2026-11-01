@@ -6,6 +6,7 @@ import com.slimex.cloudcamera.camera.CaptureMode
 import com.slimex.cloudcamera.camera.FlashSetting
 import com.slimex.cloudcamera.camera.LensFacing
 import com.slimex.cloudcamera.core.network.ConnectivityObserver
+import com.slimex.cloudcamera.core.util.Formatters
 import com.slimex.cloudcamera.domain.model.AppSettings
 import com.slimex.cloudcamera.domain.model.MediaKind
 import com.slimex.cloudcamera.domain.model.PhotoQuality
@@ -208,6 +209,30 @@ class CameraViewModel @Inject constructor(
     fun newOutputFile(kind: MediaKind): File = staging.newCaptureFile(kind)
 
     /**
+     * Reserves a private file for the next capture.
+     *
+     * Refuses when the device is nearly full (a 4K video can otherwise fill the volume and take
+     * the app data with it) and reports the problem through [State.error] instead of throwing.
+     */
+    fun requestOutputFile(kind: MediaKind): File? {
+        val free = staging.freeBytes()
+        if (free < MIN_FREE_BYTES) {
+            _state.update {
+                it.copy(
+                    error = "Only ${Formatters.bytes(free)} free. Free up space before capturing so " +
+                        "nothing is lost.",
+                )
+            }
+            return null
+        }
+        return runCatching { staging.newCaptureFile(kind) }.getOrNull()?.also { file ->
+            if (file.parentFile?.let { dir -> !dir.exists() || !dir.canWrite() } == true) {
+                _state.update { it.copy(error = "Could not create a private file for this capture.") }
+            }
+        }
+    }
+
+    /**
      * Registers a finished capture in the encrypted upload queue.
      *
      * The file never leaves app-private storage until the cloud copy is verified; when the
@@ -216,6 +241,17 @@ class CameraViewModel @Inject constructor(
     fun onCaptureSaved(file: File, kind: MediaKind, durationMillis: Long?) {
         _state.update {
             it.copy(busy = false, lastCapturePath = file.absolutePath, lastCaptureKind = kind)
+        }
+        if (!file.exists() || file.length() == 0L) {
+            // Corrupt/aborted capture: drop the empty file and tell the user instead of queueing it.
+            runCatching { file.delete() }
+            _state.update {
+                it.copy(
+                    busy = false,
+                    error = "The capture was empty or could not be written. Please try again.",
+                )
+            }
+            return
         }
         viewModelScope.launch {
             runCatching { localMediaRepository.refresh() }
@@ -239,5 +275,10 @@ class CameraViewModel @Inject constructor(
             }
             _state.update { it.copy(message = text) }
         }
+    }
+
+    private companion object {
+        /** Never start a capture with less than this much room left on the volume. */
+        const val MIN_FREE_BYTES = 250L * 1024 * 1024
     }
 }

@@ -44,13 +44,11 @@ create table if not exists public.media_files (
     encrypted          boolean not null default true,
     encryption_alg     text not null default 'AES-256-GCM',
     checksum           text,
-    encryption_key     text,
-    encryption_nonce   text,
     thumbnail_path     text,
     thumbnail_size     bigint,
     thumbnail_checksum text,
-    thumbnail_key      text,
-    thumbnail_nonce    text,
+    -- NOTE (Part 3): no key or nonce columns exist on purpose. Encryption keys are generated
+    -- and kept on the device only (Android Keystore protected key ring) and are never uploaded.
     width              integer,
     height             integer,
     duration_ms        bigint,
@@ -67,11 +65,8 @@ create table if not exists public.media_files (
     constraint media_files_path_layout check (
         storage_path ~ '^[0-9a-f-]{36}/[0-9]{4}/(0[1-9]|1[0-2])/[A-Za-z0-9._-]+$'
     ),
-    -- A row may only claim to be encrypted if it carries usable key material.
-    constraint media_files_keys_present check (
-        encrypted = false
-        or (encryption_key is not null and encryption_nonce is not null)
-    )
+    -- Only ciphertext may be marked as uploaded.
+    constraint media_files_encrypted_only check (encrypted = true)
 );
 
 comment on table public.media_files is
@@ -261,3 +256,27 @@ grant select on public.media_usage to authenticated;
 --  rows to keep, remove it manually:
 --      drop table if exists public.media_assets cascade;
 -- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- Migration from an earlier build that stored key material in this table.
+-- Safe to run on a fresh project (the columns simply do not exist).
+-- Dropping these columns is intentional: keys must never live in the cloud.
+-- ---------------------------------------------------------------------------
+alter table public.media_files drop column if exists encryption_key;
+alter table public.media_files drop column if exists encryption_nonce;
+alter table public.media_files drop column if exists thumbnail_key;
+alter table public.media_files drop column if exists thumbnail_nonce;
+alter table public.media_files drop constraint if exists media_files_keys_present;
+
+-- Guard: refuse any future attempt to reintroduce key material in the cloud.
+do $$
+begin
+    if exists (
+        select 1 from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'media_files'
+          and column_name in ('encryption_key', 'encryption_nonce', 'thumbnail_key', 'thumbnail_nonce')
+    ) then
+        raise exception 'media_files must not contain encryption key material';
+    end if;
+end $$;

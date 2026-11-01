@@ -18,6 +18,7 @@ import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Notifications
@@ -65,6 +66,7 @@ fun SettingsScreen(
     onOpenAbout: () -> Unit,
     onOpenStorage: () -> Unit,
     onOpenAccount: () -> Unit,
+    onOpenSecurity: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -182,6 +184,27 @@ fun SettingsScreen(
                             SlimeXSwitch(
                                 checked = state.settings.strictZeroLocalStorage,
                                 onCheckedChange = viewModel::setStrictZeroLocalStorage,
+                            )
+                        },
+                    )
+                }
+            }
+
+            item {
+                SectionHeader(title = "Security")
+                Spacer(modifier = Modifier.height(Spacing.sm))
+                SlimeCard(contentPadding = PaddingValues(0.dp)) {
+                    SettingRow(
+                        title = "Encryption & recovery",
+                        subtitle = "AES-256-GCM key vault and recovery code",
+                        icon = Icons.Rounded.Key,
+                        onClick = onOpenSecurity,
+                        trailing = {
+                            Icon(
+                                imageVector = Icons.Rounded.ChevronRight,
+                                contentDescription = null,
+                                tint = TextTertiary,
+                                modifier = Modifier.size(18.dp),
                             )
                         },
                     )

@@ -172,10 +172,8 @@ fun CameraScreen(
         } else if (!state.busy && !state.isRecording) {
             scope.launch {
                 viewModel.setBusy(true)
-                val file = try {
-                    viewModel.newOutputFile(MediaKind.PHOTO)
-                } catch (t: Throwable) {
-                    viewModel.onError("Could not create a file for the photo.")
+                val file = viewModel.requestOutputFile(MediaKind.PHOTO) ?: run {
+                    viewModel.setBusy(false)
                     return@launch
                 }
                 when (val result = controller.capturePhoto(file, state.flash)) {
@@ -199,12 +197,7 @@ fun CameraScreen(
                 permissions.request(AppPermissions.MICROPHONE)
             }
             scope.launch {
-                val file = try {
-                    viewModel.newOutputFile(MediaKind.VIDEO)
-                } catch (t: Throwable) {
-                    viewModel.onError("Could not create a file for the video.")
-                    return@launch
-                }
+                val file = viewModel.requestOutputFile(MediaKind.VIDEO) ?: return@launch
                 val withAudio = wantsAudio && controller.hasAudioPermission
                 when (val result = controller.startRecording(file, withAudio)) {
                     is AppResult.Failure -> viewModel.onError(result.error.message)

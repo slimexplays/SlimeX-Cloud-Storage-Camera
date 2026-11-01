@@ -10,9 +10,15 @@ import com.slimex.cloudcamera.core.network.ConnectivityObserver
 import com.slimex.cloudcamera.core.util.DefaultDispatchersProvider
 import com.slimex.cloudcamera.core.util.DispatchersProvider
 import com.slimex.cloudcamera.security.AesGcmMediaCrypto
+import com.slimex.cloudcamera.security.EncryptedMediaKeyStore
 import com.slimex.cloudcamera.security.EncryptedSecureStore
+import com.slimex.cloudcamera.security.KeystoreVaultCrypto
 import com.slimex.cloudcamera.security.MediaCrypto
+import com.slimex.cloudcamera.security.MediaKeyStore
+import com.slimex.cloudcamera.security.PassphraseRecoveryManager
+import com.slimex.cloudcamera.security.RecoveryManager
 import com.slimex.cloudcamera.security.SecureStore
+import com.slimex.cloudcamera.security.VaultCrypto
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -77,4 +83,16 @@ abstract class BindingsModule {
     @Binds
     @Singleton
     abstract fun bindMediaCrypto(impl: AesGcmMediaCrypto): MediaCrypto
+
+    @Binds
+    @Singleton
+    abstract fun bindVaultCrypto(impl: KeystoreVaultCrypto): VaultCrypto
+
+    @Binds
+    @Singleton
+    abstract fun bindMediaKeyStore(impl: EncryptedMediaKeyStore): MediaKeyStore
+
+    @Binds
+    @Singleton
+    abstract fun bindRecoveryManager(impl: PassphraseRecoveryManager): RecoveryManager
 }

@@ -2,10 +2,10 @@ package com.slimex.cloudcamera.security
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.slimex.cloudcamera.core.constants.AppConstants
+import com.slimex.cloudcamera.core.util.SecureLog
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -44,7 +44,7 @@ class EncryptedSecureStore @Inject constructor(
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         )
     } catch (t: Throwable) {
-        Log.w(TAG, "Encrypted storage unavailable, falling back to session-only storage", t)
+        SecureLog.w(TAG, "Encrypted storage unavailable, falling back to session-only storage", t)
         isEncryptionAvailable = false
         storageWarning =
             "Secure storage is unavailable on this device, so the Supabase configuration " +

@@ -24,7 +24,11 @@ Both scripts are idempotent — re-running them is safe.
 
 - `media_files.storage_path` must match `{user_id}/{year}/{month}/{unique_file_id}.enc`
   (`media_files_path_owner` and `media_files_path_layout` checks).
-- A row cannot claim to be encrypted without key material (`media_files_keys_present`).
+- Every row is ciphertext (`media_files_encrypted_only`).
+- **No key material is stored in the database.** Part 3 removed `encryption_key`,
+  `encryption_nonce`, `thumbnail_key` and `thumbnail_nonce`; the migration at the end of
+  `schema.sql` drops them from older projects and raises an error if anything tries to add them
+  back. Keys live only in the app's Keystore-protected key ring on the device.
 - Every table has RLS **enabled and forced**; every policy compares `user_id` to `auth.uid()`.
 - `upload_jobs.status` is constrained to the queue's real states, `retry_count` is bounded.
 

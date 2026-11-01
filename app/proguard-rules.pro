@@ -44,3 +44,18 @@
 
 # ---- App models used reflectively by WorkManager ---------------------------
 -keep class * extends androidx.work.ListenableWorker { *; }
+
+# ---- Security / crypto -----------------------------------------------------
+# JCE providers are resolved by name at runtime; nothing needs keeping, only silencing.
+-dontwarn javax.crypto.**
+-dontwarn java.security.**
+
+# ---- WorkManager @HiltWorker generated adapters ----------------------------
+-keep class **_HiltModules* { *; }
+-keep class **_GeneratedInjector { *; }
+-keep class **__Factory { *; }
+-keep class **__MembersInjector { *; }
+
+# ---- Keep line numbers for crash reports without leaking source content ----
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile

@@ -41,14 +41,10 @@ data class MediaRowInput(
     val fileSize: Long,
     val mediaType: MediaKind,
     val checksum: String,
-    val encryptionKey: String,
-    val encryptionNonce: String,
     val createdAtIso: String,
     val thumbnailPath: String?,
     val thumbnailSize: Long?,
     val thumbnailChecksum: String?,
-    val thumbnailKey: String?,
-    val thumbnailNonce: String?,
 )
 
 /**
@@ -134,21 +130,19 @@ class SupabaseDataApi @Inject constructor(
             put("encrypted", JsonPrimitive(true))
             put("encryption_alg", JsonPrimitive("AES-256-GCM"))
             put("checksum", JsonPrimitive(row.checksum))
-            put("encryption_key", JsonPrimitive(row.encryptionKey))
-            put("encryption_nonce", JsonPrimitive(row.encryptionNonce))
             put("created_at", JsonPrimitive(row.createdAtIso))
             row.thumbnailPath?.let { put("thumbnail_path", JsonPrimitive(it)) }
             row.thumbnailSize?.let { put("thumbnail_size", JsonPrimitive(it)) }
             row.thumbnailChecksum?.let { put("thumbnail_checksum", JsonPrimitive(it)) }
-            row.thumbnailKey?.let { put("thumbnail_key", JsonPrimitive(it)) }
-            row.thumbnailNonce?.let { put("thumbnail_nonce", JsonPrimitive(it)) }
         }.toString()
 
+        // Idempotent insert: a retry after a crash mid-upload merges into the same row instead of
+        // failing with a duplicate-key error (the media id is generated before the first attempt).
         val request = Request.Builder()
-            .url(url)
+            .url("$url?on_conflict=id")
             .post(payload.toRequestBody(JSON))
             .authed(config, accessToken)
-            .header("Prefer", "return=minimal")
+            .header("Prefer", "resolution=merge-duplicates,return=minimal")
             .build()
         val outcome = execute(request)
         if (!outcome.isSuccessful) {
@@ -281,11 +275,7 @@ class SupabaseDataApi @Inject constructor(
             } ?: true,
             checksum = string("checksum"),
             createdAtMillis = parseIso(string("created_at")),
-            encryptionKey = string("encryption_key"),
-            encryptionNonce = string("encryption_nonce"),
             thumbnailPath = string("thumbnail_path"),
-            thumbnailKey = string("thumbnail_key"),
-            thumbnailNonce = string("thumbnail_nonce"),
         )
     }
 
@@ -349,6 +339,6 @@ class SupabaseDataApi @Inject constructor(
         val JSON = "application/json; charset=utf-8".toMediaTypeOrNull()
         const val SELECT_COLUMNS =
             "id,user_id,storage_path,file_name,mime_type,file_size,media_type,encrypted,checksum," +
-                "created_at,encryption_key,encryption_nonce,thumbnail_path,thumbnail_key,thumbnail_nonce"
+                "created_at,thumbnail_path"
     }
 }

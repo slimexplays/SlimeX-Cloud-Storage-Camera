@@ -12,6 +12,8 @@ import com.slimex.cloudcamera.media.ThumbnailFactory
 import com.slimex.cloudcamera.security.EncryptedMedia
 import com.slimex.cloudcamera.security.MediaCrypto
 import com.slimex.cloudcamera.security.MediaKey
+import com.slimex.cloudcamera.security.MediaKeyEntry
+import com.slimex.cloudcamera.security.MediaKeyStore
 import com.slimex.cloudcamera.storage.StagingStore
 import java.io.File
 import java.text.SimpleDateFormat
@@ -53,6 +55,7 @@ class MediaUploader @Inject constructor(
     private val data: SupabaseDataApi,
     private val staging: StagingStore,
     private val thumbnails: ThumbnailFactory,
+    private val keyStore: MediaKeyStore,
 ) {
 
     suspend fun prepare(task: UploadTask, userId: String): AppResult<PreparedUpload> {
@@ -60,6 +63,14 @@ class MediaUploader @Inject constructor(
         if (!source.exists() || source.length() == 0L) {
             return AppResult.Failure(
                 AppFailure.storage("The captured file is no longer on this device, so it cannot be uploaded."),
+            )
+        }
+
+        // Encrypting needs room for a full second copy of the file.
+        val free = staging.freeBytes()
+        if (free < source.length() + ENCRYPT_HEADROOM_BYTES) {
+            return AppResult.Failure(
+                AppFailure.storage("Not enough free space to encrypt this file for upload."),
             )
         }
 
@@ -205,7 +216,25 @@ class MediaUploader @Inject constructor(
         return AppResult.Success(Unit)
     }
 
+    /**
+     * Persists the key ring entry **first** and only then inserts the metadata row.
+     *
+     * The order matters: a row without its local key could never be decrypted again, while an
+     * orphaned key entry is harmless (the next attempt for the same media id overwrites it).
+     * No key or nonce is ever written to Supabase — only the bucket path, sizes and checksums.
+     */
     suspend fun saveMetadata(context: CloudContext, prepared: PreparedUpload, task: UploadTask): AppResult<Unit> {
+        val entry = MediaKeyEntry(
+            k = prepared.encryptionKey.keyBase64,
+            n = prepared.encryptionKey.nonceBase64,
+            tk = prepared.thumbnailKey?.keyBase64,
+            tn = prepared.thumbnailKey?.nonceBase64,
+        )
+        when (val stored = keyStore.put(prepared.mediaId, entry)) {
+            is AppResult.Failure -> return stored
+            is AppResult.Success -> Unit
+        }
+
         val row = MediaRowInput(
             id = prepared.mediaId,
             userId = context.userId,
@@ -215,14 +244,10 @@ class MediaUploader @Inject constructor(
             fileSize = prepared.sourceFile.length(),
             mediaType = task.kind,
             checksum = prepared.plaintextChecksum,
-            encryptionKey = prepared.encryptionKey.keyBase64,
-            encryptionNonce = prepared.encryptionKey.nonceBase64,
             createdAtIso = isoDate(task.capturedAt),
             thumbnailPath = prepared.thumbnailObjectKey,
             thumbnailSize = prepared.thumbnailSize,
             thumbnailChecksum = prepared.thumbnailChecksum,
-            thumbnailKey = prepared.thumbnailKey?.keyBase64,
-            thumbnailNonce = prepared.thumbnailKey?.nonceBase64,
         )
         return data.insertMedia(context.config, context.accessToken, row)
     }
@@ -255,5 +280,6 @@ class MediaUploader @Inject constructor(
     private companion object {
         const val OCTET_STREAM = "application/octet-stream"
         const val VERIFY_DOWNLOAD_LIMIT = 64L * 1024 * 1024
+        const val ENCRYPT_HEADROOM_BYTES = 16L * 1024 * 1024
     }
 }

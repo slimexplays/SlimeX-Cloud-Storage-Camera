@@ -7,13 +7,16 @@ after installing.
 
 **Made By Slime Plays** · Package `com.slimex.cloudcamera` · Kotlin + Jetpack Compose
 
+> **Parts 1 + 2 + 3 are complete and merged into this one project.** One app, one package, one
+> navigation graph, one APK — there is no second module, no demo build and no mock screen.
+
 ---
 
-## Status — Parts 1 + 2 complete, Part 3 pending
+## Status — Parts 1, 2 and 3 complete
 
 This repository is the **single, unified project** for the whole specification: one app, one
-package, one navigation graph, one APK. Part 2 was added to the existing project — nothing was
-re-created and all Part 1 screens still work.
+package, one navigation graph, one APK. Each part was added to the existing project — nothing was
+re-created, and every Part 1 screen still works exactly as before.
 
 | Area | State |
 | --- | --- |
@@ -29,7 +32,13 @@ re-created and all Part 1 screens still work.
 | Private cloud gallery (thumbs, viewer, video playback, search, sort, delete, share) | ✅ **Part 2** |
 | Storage dashboard (cloud usage, counts, pending/failed, cache clean-up) | ✅ **Part 2** |
 | Direct WhatsApp/Sharesheet sharing via FileProvider + delayed clean-up | ✅ **Part 2** |
-| Final packaging / release checklist / Part 3 features | ⏳ Part 3 |
+| Device-bound key vault (Android Keystore) + optional per-media keys | ✅ **Part 3** |
+| Recovery code export/restore (PBKDF2 + AES-256-GCM), reset with warning | ✅ **Part 3** |
+| Encryption & Recovery screen wired into the single nav graph | ✅ **Part 3** |
+| Secure configuration review, debug-only logging, cleartext traffic disabled | ✅ **Part 3** |
+| Expanded failure handling (low storage, corrupt capture, missing key, reset vault) | ✅ **Part 3** |
+| Unit tests for the recovery envelope and key ring format | ✅ **Part 3** |
+| Setup guides, testing checklist, known limitations, build verification report | ✅ **Part 3** |
 
 ---
 
@@ -123,6 +132,35 @@ re-created and all Part 1 screens still work.
   Telegram or any gallery app stores its own file once it has the bytes; that is outside this
   app's control.
 
+### Encryption & recovery (Part 3)
+
+```
+files/keys/keyring.v1        ← per-media keys, sealed with the vault master key
+Android Keystore              ← non-exportable AES-256-GCM key that wraps the master key
+Settings → Encryption & Recovery → one recovery code (SLIMEX-KEY-1:…)
+```
+
+- **No key ever reaches Supabase.** `media_files` stores only a path, size, MIME type and the
+  plaintext SHA-256; `encryption_key`, `encryption_nonce`, `thumbnail_key` and `thumbnail_nonce`
+  do not exist as columns any more (the SQL drops them if an older build created them).
+- Every file gets a **fresh random 256-bit key and a fresh 96-bit nonce**; GCM authentication
+  means a modified ciphertext fails to decrypt instead of yielding garbage.
+- Per-media keys are kept in a small JSON key ring that is sealed with a random 256-bit *vault
+  master key*; the master key is wrapped by a key that lives in the **Android Keystore** and
+  cannot be exported from it.
+- Nonces for the vault are produced from a persisted counter (`4 random bytes || 8-byte
+  counter`), so a nonce is never reused under the same key, even across crashes.
+- **Recovery code**: `SLIMEX-KEY-1:` + base64 of `magic | salt(16) | nonce(12) | AES-256-GCM`.
+  The passphrase is stretched with PBKDF2-HMAC-SHA256 (210 000 rounds) and the payload holds the
+  vault key plus every media key, so a reinstall or a new phone can open the existing library.
+  The code is shown once, can be copied or shared as plain text, and is never uploaded.
+- **Losing both the code and the passphrase makes encrypted cloud media permanently
+  unreadable** — the screen says so before and after export, and the reset action repeats it.
+- Importing a recovery code on a device that already has a key ring replaces the local key ring
+  (that is the point: the code is the source of truth for that library).
+- If the Keystore is unavailable, the app fails closed: uploads are blocked rather than writing
+  keys somewhere weaker.
+
 ### Storage dashboard
 
 - Cloud usage, file counts and photo/video split (computed from your own rows).
@@ -152,7 +190,7 @@ app/src/main/java/com/slimex/cloudcamera/
 │   ├── constants/AppConstants.kt   non-sensitive constants (bucket, dirs, cache names)
 │   ├── network/ConnectivityObserver.kt
 │   ├── result/AppResult.kt         typed Success/Failure + FailureKind
-│   └── util/                       dispatchers, formatters, StoragePaths (object layout)
+│   └── util/                       dispatchers, formatters, StoragePaths, SecureLog
 ├── data/
 │   ├── local/                      upload queue DTO + DataStore persistence
 │   └── repository/                 settings, cloud config, gallery, upload, staging
@@ -161,7 +199,14 @@ app/src/main/java/com/slimex/cloudcamera/
 │   ├── repository/                 interfaces consumed by ViewModels
 │   └── usecase/                    SaveSupabaseConfig, TestSupabaseConnection
 ├── media/ThumbnailFactory.kt       JPEG previews from photos and video frames
-├── security/                       Keystore stores + AES-256-GCM media crypto
+├── security/
+│   ├── MediaCrypto.kt              streaming AES-256-GCM encrypt/decrypt + SHA-256
+│   ├── VaultCrypto.kt              Android Keystore wrapped vault master key, counter nonces
+│   ├── MediaKeyStore.kt            local key ring (media id → key/nonce), atomically sealed
+│   ├── RecoveryEnvelope.kt         PBKDF2 + AES-GCM recovery code format (JVM testable)
+│   ├── RecoveryManager.kt          export / restore / reset of the key ring
+│   ├── SecureStore.kt              credential storage contract
+│   └── EncryptedSecureStore.kt     EncryptedSharedPreferences implementation
 ├── sharing/MediaSharer.kt          FileProvider + Sharesheet + TTL clean-up
 ├── storage/StagingStore.kt         every private directory, listing, usage, safe clean-up
 ├── upload/                         MediaUploader pipeline + WorkManager scheduler
@@ -170,7 +215,7 @@ app/src/main/java/com/slimex/cloudcamera/
 │   ├── theme/                      colour, type, shape, theme, spacing
 │   ├── components/                 top bar, bottom bar, buttons, cards, dialogs, states
 │   ├── screens/                    onboarding, home, camera, gallery, uploads, storage,
-│   │                               settings (cloud + camera), account, about
+│   │                               settings (cloud + camera + security), account, about
 │   ├── Permissions.kt              dependency-free runtime permission helper
 │   └── SlimeXApp.kt                startup routing (splash → onboarding → main)
 ├── workers/                        UploadWorker, ShareCleanupWorker
@@ -206,6 +251,14 @@ cd SlimeX-Cloud-Storage-Camera
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+No APK is committed to this repository (binaries do not belong in Git). If you have no local
+Android toolchain, push the project to GitHub and run the included **Build debug APK** workflow
+(`.github/workflows/build-apk.yml`, *Actions → Build debug APK → Run workflow*): it builds on a
+clean runner and uploads `app-debug.apk` as an artifact you can download and install.
+
+`docs/BUILD_VERIFICATION.md` records exactly what was and was not verified while the project was
+authored, so nothing here overstates the build state.
+
 ### Release APK
 
 Create a keystore (never commit it), then sign the release build:
@@ -234,10 +287,13 @@ apksigner sign --ks slimex-release.jks \
 2. **Settings → Supabase configuration** → paste URL + publishable key → **Test connection** →
    **Save**. Run the SQL from `supabase/` once in your project.
 3. **Account** → create an account (confirm the email if your project requires it) → sign in.
-4. **Camera** → capture. Each capture is encrypted, queued and uploaded when a connection is
+4. **Settings → Encryption & Recovery** → create a recovery code and store it off-device. Do this
+   before you accumulate media you cannot afford to lose: it is the only way back into your
+   library after a reinstall.
+5. **Camera** → capture. Each capture is encrypted, queued and uploaded when a connection is
    available; with zero-local-storage mode enabled, capture is blocked while offline instead.
-5. **Cloud** → browse, search, sort, open, play, share, delete.
-6. **Storage** → see cloud + device usage, pending/failed uploads, clear caches.
+6. **Cloud** → browse, search, sort, open, play, share, delete.
+7. **Storage** → see cloud + device usage, pending/failed uploads, clear caches.
 
 The app is usable without Supabase: capture, the queue (blocked), storage and settings all
 work; nothing is uploaded and nothing is lost.
@@ -252,10 +308,20 @@ work; nothing is uploaded and nothing is lost.
   claim check.
 - The bucket is private and RLS-protected; storage policies compare the first path segment to
   `auth.uid()`.
-- File contents are AES-256-GCM ciphertext at rest in the bucket. The per-file key and nonce
-  are stored in `media_files`, readable **only by the owner** through RLS — that is what makes
-  decryption possible after a reinstall. Someone with your publishable key alone cannot read
-  them: the key grants nothing without your signed-in session.
+- File contents are AES-256-GCM ciphertext at rest in the bucket. The per-file keys live only on
+  the device (Keystore-wrapped key ring) and are **never written to Supabase**, so the cloud holds
+  nothing that can decrypt your media. Reading a file requires the device key *and* an
+  authenticated session for the owner's rows.
+- All traffic is HTTPS (`usesCleartextTraffic="false"`); the publishable key is sent only as the
+  `apikey`/Bearer header, never logged. Tokens and the Supabase configuration sit in
+  Keystore-backed encrypted preferences and never appear in logcat.
+- Logging goes through `SecureLog`, which is a no-op in release builds: passwords, API keys,
+  tokens, encryption keys and file contents are never printed. WorkManager's own logging is
+  raised to `ERROR` in release.
+- The `FileProvider` exposes exactly one directory (`cache/share/`) for read-only grants; pending
+  captures, the key ring and decrypted viewer copies are unreachable from other apps.
+- `allowBackup="false"` plus explicit backup/data-extraction rules keep media, tokens and keys
+  out of cloud backups and device-to-device transfers.
 - Media never enters shared storage: previews and decrypted copies live in the app cache and
   are evicted/cleaned. `allowBackup="false"` keeps credentials and media out of backups.
 - Deleting the app deletes the Keystore keys used for the stored session and configuration;
@@ -269,8 +335,12 @@ work; nothing is uploaded and nothing is lost.
   size + listing) so a 500 MB video does not double the traffic.
 - The bucket enforces `application/octet-stream` and a 500 MB per-object limit; raise the limit
   in `storage.sql` if you record longer clips.
-- Part 3 will cover the remaining surface (notifications with progress, batch operations,
-  release packaging). No screen in this build is a placeholder.
+- Keys are device-bound by design. Opening a library on a second device requires exporting the
+  recovery code on the first device and importing it on the second one.
+- Losing both the recovery code and its passphrase is unrecoverable — there is no server-side
+  copy of your keys, which is exactly why the cloud cannot leak them.
+- Photos are re-encoded JPEGs (no RAW/DNG, no HDR pipeline); the app never claims OEM-level
+  processing. Night/low-light performance matches what CameraX gives an entry-level sensor.
 
 ---
 
@@ -315,7 +385,22 @@ overlay controls, no purple decoration.
 ```
 
 Covers formatters, the persisted queue DTO, the bucket path builder (`{user}/{year}/{month}/{id}`),
-upload state semantics, queue summary maths and the gallery models.
+upload state semantics, queue summary maths, the gallery models, the **recovery envelope**
+(round trip, wrong passphrase, tampered bytes, salt/nonce freshness, whitespace tolerance) and the
+**key ring JSON format**.
+
+The recovery tests are pure JVM tests — no emulator and no Robolectric needed.
+
+### Documentation
+
+| Document | Contents |
+| --- | --- |
+| [`docs/ANDROID_STUDIO_SETUP.md`](docs/ANDROID_STUDIO_SETUP.md) | open the project, SDK setup, run on a device, build debug/release APKs |
+| [`docs/SUPABASE_SETUP.md`](docs/SUPABASE_SETUP.md) | create the project, run the SQL, create the private bucket, auth settings |
+| [`docs/TESTING_CHECKLIST.md`](docs/TESTING_CHECKLIST.md) | the 20 required test scenarios with expected results (Realme C31 / API 31) |
+| [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) | what this build genuinely cannot do, and why |
+| [`docs/BUILD_VERIFICATION.md`](docs/BUILD_VERIFICATION.md) | what was statically verified, what still needs a real Gradle run |
+| [`supabase/README.md`](supabase/README.md) | SQL scripts, RLS policies, bucket policy notes |
 
 ---
 
