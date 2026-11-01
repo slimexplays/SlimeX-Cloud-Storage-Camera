@@ -16,9 +16,13 @@ enum class UploadStatus {
     val isFinished: Boolean
         get() = this == UPLOADED || this == CANCELLED
 
+    /**
+     * True only for states in which the pipeline is doing (or about to do) work.
+     * `WAITING_FOR_*` states are blocked, not active: nothing is progressing until the network,
+     * the configuration or the session comes back.
+     */
     val isActive: Boolean
-        get() = this == QUEUED || this == ENCRYPTING || this == UPLOADING || this == VERIFYING ||
-            this == WAITING_FOR_NETWORK || this == WAITING_FOR_CONFIG || this == WAITING_FOR_AUTH
+        get() = this == QUEUED || this == ENCRYPTING || this == UPLOADING || this == VERIFYING
 
     val isRunning: Boolean
         get() = this == ENCRYPTING || this == UPLOADING || this == VERIFYING

@@ -45,6 +45,11 @@
 # ---- App models used reflectively by WorkManager ---------------------------
 -keep class * extends androidx.work.ListenableWorker { *; }
 
+# ---- Tink (transitive dependency of androidx.security:security-crypto) ------
+# Tink is annotated with Error Prone annotations, which are compile-time only and are not shipped
+# in the APK, so R8 sees them as missing classes.
+-dontwarn com.google.errorprone.annotations.**
+
 # ---- Security / crypto -----------------------------------------------------
 # JCE providers are resolved by name at runtime; nothing needs keeping, only silencing.
 -dontwarn javax.crypto.**
