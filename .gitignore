@@ -13,7 +13,11 @@ local.properties
 *.aab
 *.keystore
 *.jks
+*.p12
+*.pepk
 !debug.keystore
+release-keystore.properties
+keystore.properties
 .kotlin/
 
 # Cloudflare Worker (worker/)
