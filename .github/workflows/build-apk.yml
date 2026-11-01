@@ -1,7 +1,7 @@
 # BUILD APK + AAB
 # This workflow builds debug and signed release packages.
 
-name: Build APK+AAB
+name: Build APK+AAB With Sing
 
 on:
   push:
