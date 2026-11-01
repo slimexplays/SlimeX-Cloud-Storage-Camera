@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Re-emits the interesting lines of a build log as GitHub Actions annotations.
+# Re-emits the important part of a failed Gradle log as GitHub Actions annotations.
 #
-# The raw log of a failed step is only downloadable from the Actions UI; annotations are visible
-# in `gh run view` and in the checks API, so a failure is diagnosable without them.
+# Raw step logs are only accessible from the Actions UI (the log download goes through a storage
+# host that is not always reachable), while annotations are available from the checks API and in
+# `gh run view`. So a failure is turned into a short, prioritised annotation digest:
+#
+#   1. Kotlin / Java compiler errors (`e: …`, `error: …`)
+#   2. the "FAILURE: Build failed with an exception." block, which is where a Gradle configuration
+#      error (an `app/build.gradle.kts` script error included) states what is actually wrong
+#   3. the last lines of the log
 #
 #   report-failure.sh <log file> [title]
 set -uo pipefail
@@ -15,21 +21,46 @@ if [ -z "$LOG" ] || [ ! -f "$LOG" ]; then
   exit 0
 fi
 
-echo "::error::$TITLE — the first errors Gradle reported are listed below"
+# Strip carriage returns and ANSI escapes so annotations stay readable.
+CLEAN="$(mktemp)"
+sed -e 's/\r$//' -e 's/\x1b\[[0-9;]*[A-Za-z]//g' "$LOG" > "$CLEAN"
 
-# Gradle/Kotlin/AGP error shapes, in the order they normally matter.
-grep -E "^e: |^error: |^FAILURE:|^\* What went wrong:|^> |^Execution failed for task|Caused by:|requires Java|Unresolved reference|Syntax error|Cannot resolve" "$LOG" \
-  | sed 's/\r$//' \
-  | awk 'length($0) < 800' \
-  | head -n 40 \
+emit() {
+  # GitHub annotation data cannot contain raw % or newlines.
+  local line="$1"
+  line="${line//%/%25}"
+  line="${line//$'\n'/ }"
+  echo "::error::${line:0:900}"
+}
+
+echo "::error::$TITLE — digest below (first compiler errors, then Gradle's failure block)"
+
+# 1. Compiler errors first: these are what usually break the build.
+mapfile -t COMPILER < <(grep -E '^(e: |error: |.*error: )' "$CLEAN" | head -n 12)
+if [ "${#COMPILER[@]}" -gt 0 ]; then
+  for line in "${COMPILER[@]}"; do emit "$line"; done
+else
+  emit "No Kotlin/Java compiler errors were printed before the failure."
+fi
+
+# 2. Gradle's own explanation, from "FAILURE:" until the stack trace starts.
+awk '/^FAILURE: Build failed/{flag=1} flag' "$CLEAN" \
+  | awk '/^\* Exception is:/{exit} {print}' \
+  | head -n 22 \
   | while IFS= read -r line; do
-      # `::error::` must stay on one line and cannot contain raw % or newlines.
-      safe="${line//%/%25}"
-      echo "::error::${safe}"
+      [ -n "$line" ] && emit "$line"
     done
 
-echo "::error::Full log tail (Gradle):"
-tail -n 25 "$LOG" | sed 's/\r$//' | awk 'length($0) < 800' | while IFS= read -r line; do
-  safe="${line//%/%25}"
-  echo "::error::${safe}"
-done
+# 3. Same digest in the job summary, which is readable in the run page.
+{
+  echo "### $TITLE"
+  echo
+  echo '```'
+  grep -E '^(e: |error: )' "$CLEAN" | head -n 12
+  echo
+  awk '/^FAILURE: Build failed/{flag=1} flag' "$CLEAN" | awk '/^\* Exception is:/{exit} {print}' | head -n 22
+  echo '```'
+} >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+rm -f "$CLEAN"
+exit 0
